@@ -3,7 +3,7 @@
 
 # Python缓存
 __pycache__/
-*.pyc
+*.py[cod]
 
 # 日志
 *.log

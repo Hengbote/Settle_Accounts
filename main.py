@@ -476,6 +476,7 @@ class OrderTab:
         val = self.customer_suggestion_listbox.get(i)
         self.customer_entry.delete(0, tk.END)
         self.customer_entry.insert(0, val)
+        self.app.update_tab_title(self, val)
         self.update_store_based_on_customer(val)
         self.hide_customer_suggestion()
 
@@ -499,6 +500,7 @@ class OrderTab:
             val = self.customer_suggestion_listbox.get(sel[0])
             self.customer_entry.delete(0, tk.END)
             self.customer_entry.insert(0, val)
+            self.app.update_tab_title(self, val)
             self.update_store_based_on_customer(val)
         self.hide_customer_suggestion()
 
@@ -615,6 +617,8 @@ class OrderTab:
             self.app.conn_saved.commit()
             # 清空当前表单
             self.customer_entry.delete(0, tk.END)
+            self.hide_customer_suggestion()
+            self.app.update_tab_title(self, "")
             self.update_date_entry()
             for pr in self.entries:
                 pr.quantity_var.set('')
@@ -622,6 +626,7 @@ class OrderTab:
                 pr.price_var.set('')
                 pr.total_var.set('')
             self.calculate_total_price()
+
         except Exception as e:
             self.app.conn_saved.rollback()
             messagebox.showerror("数据库错误", f"保存失败: {e}")
@@ -861,7 +866,7 @@ class ProductEntryApp:
             rows = self.cursor_main.fetchall()
             self.stores_by_id = {r[0]: r[1] for r in rows}
             self.stores_by_number = {str(r[0]): r[0] for r in rows}
-            store_names = list(self.stores_by_id.values())
+            #store_names = list(self.stores_by_id.values())
             # 填充每个 tab 的 combobox
             for tab in self.order_tabs:
                 """tab.store_combo['values'] = store_names

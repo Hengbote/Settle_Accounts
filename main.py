@@ -1,4 +1,4 @@
-import os, sys, sqlite3
+import os, sys, sqlite3, json
 import tkinter as tk
 import ctypes
 from tkinter import ttk, messagebox
@@ -47,6 +47,7 @@ class OrderTab:
         self.customer_scrollbar = None
         self.customer_suggestion_listbox_visible = False
         self.customer_suggestion_index = -1
+        self._restoring_state = False
 
     # ---------- UI 构建 ----------
     def setup_ui(self, parent):
@@ -109,7 +110,8 @@ class OrderTab:
         ttk.Label(date_frame, text="理货日期：", font=("Segoe UI", 12, "bold")).pack(side='left')
         self.date_entry = ttk.Entry(date_frame, width=40, font=("Segoe UI", 12, "bold"))
         self.date_entry.pack(side='left')
-        self.update_date_entry()
+        self.date_entry.bind('<KeyRelease>', lambda e: self.mark_draft_dirty())
+        self.set_current_datetime()
 
         # 客人 + 发货时间在同一行
         customer_frame = ttk.Frame(self.main_frame)
@@ -145,6 +147,7 @@ class OrderTab:
         ttk.Label(ship_frame, text="发货时间：", font=("Segoe UI", 12, "bold")).pack(side='left')
         self.ship_time_entry = ttk.Entry(ship_frame, width=20, font=("Segoe UI", 12))
         self.ship_time_entry.pack(side='left')
+        self.ship_time_entry.bind('<KeyRelease>', lambda e: self.mark_draft_dirty())
 
         # 总价显示
         total_frame = ttk.Frame(self.main_frame)
@@ -220,9 +223,9 @@ class OrderTab:
                 entry.bind(arrow_key, lambda e, pr=product_row, col=idx: self.navigate_entry(e, pr, col))
 
         # 绑定变量监听
-        product_row.quantity_var.trace_add('write', lambda *a, pr=product_row: self.update_total_price(pr))
+        product_row.quantity_var.trace_add('write', lambda *a, pr=product_row: self.on_quantity_or_price_change(pr))
         product_row.model_var.trace_add('write', lambda *a, pr=product_row: self.on_model_var_change(pr))
-        product_row.price_var.trace_add('write', lambda *a, pr=product_row: self.update_total_price(pr))
+        product_row.price_var.trace_add('write', lambda *a, pr=product_row: self.on_quantity_or_price_change(pr))
 
         # 型号输入键事件
         product_row.model_entry.bind('<KeyRelease>', lambda e, pr=product_row: self.on_model_entry_keyrelease(e, pr))
@@ -266,6 +269,9 @@ class OrderTab:
     # ---------- 型号建议 & 价格查询 ----------
     def on_model_var_change(self, product_row):
         """当型号变量改变时更新建议列表或清空相关字段"""
+        if self._restoring_state:
+            return
+
         value = product_row.model_var.get()
         if value == '':
             self.hide_suggestion_listbox(product_row)
@@ -273,6 +279,8 @@ class OrderTab:
             self.update_total_price(product_row)
         else:
             self.show_suggestions(product_row, value)
+
+        self.mark_draft_dirty()
 
     def on_model_entry_keyrelease(self, event, product_row):
         """处理型号输入框的键盘事件"""
@@ -421,6 +429,123 @@ class OrderTab:
                     pass
         self.total_price_var.set(f"{total:.2f}" if has else "")
 
+    # ---------- 草稿相关方法 ----------
+
+    def on_quantity_or_price_change(self, product_row):
+        """当“数量”或“单价”发生变化时调用
+            作用：
+            1. 重新计算这一行的小计和整单总价
+            2. 标记当前订单页需要保存草稿"""
+        if self._restoring_state:
+            return
+        self.update_total_price(product_row)
+        self.mark_draft_dirty()
+
+    def mark_draft_dirty(self):
+        """标记当前订单页“草稿已变脏”
+        注意：这里不直接保存，而是交给 app 统一做延迟保存"""
+        if self._restoring_state or getattr(self.app, '_restoring_drafts', False):
+            return
+        self.app.schedule_draft_save()
+
+    def get_current_datetime_text(self):
+        """获取当前圣保罗时间，并格式化成字符串"""
+        sao_paulo_tz = ZoneInfo("America/Sao_Paulo")
+        return datetime.now(sao_paulo_tz).strftime("%d/%m/%Y %H:%M")
+
+    def set_date_value(self, value):
+        """设置“日期输入框”的值"""
+        self.date_entry.delete(0, tk.END)
+        self.date_entry.insert(0, value)
+
+    def set_current_datetime(self):
+        """把日期输入框设置为“当前时间”"""
+        self.set_date_value(self.get_current_datetime_text())
+
+    def has_meaningful_data(self):
+        """ 判断当前这个订单页是否“真的有内容”
+            只有有内容的 tab 才值得保存成草稿"""
+        if self.customer_entry.get().strip():
+            return True
+        if self.ship_time_entry.get().strip():
+            return True
+
+        for pr in self.entries:
+            if (pr.quantity_var.get().strip() or
+                pr.model_var.get().strip() or
+                pr.price_var.get().strip() or
+                pr.total_var.get().strip()):
+                return True
+
+        return False
+ 
+    def get_draft_data(self):
+        """把当前订单页导出为“可保存的草稿数据”
+            返回一个字典，之后会被写入 JSON 文件"""
+        rows = []
+
+        # 把每一行产品数据都收集起来
+        for pr in self.entries:
+            rows.append({
+                'quantity': pr.quantity_var.get(),  # 数量
+                'model': pr.model_var.get(),        # 型号
+                'price': pr.price_var.get(),        # 单价
+                'total': pr.total_var.get(),        # 该行总价
+            })
+
+        # 返回整个订单页的数据结构
+        return {
+            'store_id': self.store_id,                 # 当前店铺ID
+            'store_name': self.store_combo.get(),      # 当前店铺名称（双保险）
+            'date': self.date_entry.get(),             # 日期
+            'customer': self.customer_entry.get(),     # 客人
+            'ship_time': self.ship_time_entry.get(),   # 发货时间
+            'rows': rows,                              # 所有产品行
+        }
+
+    def apply_draft_data(self, draft_data):
+        """把一份草稿数据重新恢复到当前订单页界面"""
+        self._restoring_state = True
+        try:
+            store_id = draft_data.get('store_id')
+            store_name = draft_data.get('store_name', '')
+            resolved_name = self.app.stores_by_id.get(store_id, store_name)
+
+            if resolved_name:
+                self.store_combo.set(resolved_name)
+                for sid, name in self.app.stores_by_id.items():
+                    if name == resolved_name:
+                        self.store_id = sid
+                        break
+            else:
+                self.store_id = None
+                self.store_combo.set('')
+
+            self.set_date_value(draft_data.get('date', self.get_current_datetime_text()))
+
+            self.customer_entry.delete(0, tk.END)
+            self.customer_entry.insert(0, draft_data.get('customer', ''))
+
+            self.ship_time_entry.delete(0, tk.END)
+            self.ship_time_entry.insert(0, draft_data.get('ship_time', ''))
+
+            rows = draft_data.get('rows', [])
+            target_count = max(16, len(rows))
+            while len(self.entries) < target_count:
+                self.add_row()
+
+            for idx, pr in enumerate(self.entries):
+                row = rows[idx] if idx < len(rows) else {}
+                pr.quantity_var.set(row.get('quantity', ''))
+                pr.model_var.set(row.get('model', ''))
+                pr.price_var.set(row.get('price', ''))
+                pr.total_var.set(row.get('total', ''))
+
+            self.calculate_total_price()
+            self.app.update_tab_title(self, draft_data.get('customer', ''))
+        finally:
+            self._restoring_state = False
+
     # ---------- 客人自动完成（在 root 层显示，防止被 canvas 遮挡） ----------
     def on_customer_keyrelease(self, event):
         """当在客人输入框中键盘释放时，更新建议列表"""
@@ -433,10 +558,12 @@ class OrderTab:
             self.hide_customer_suggestion()
             # 更新 tab 名称为空或默认
             self.app.update_tab_title(self, "新订单")
+            self.mark_draft_dirty()
             return
         # 动态更新 tab 名称为输入值（即时）
         self.app.update_tab_title(self, text)
         self.update_customer_suggestions(text)
+        self.mark_draft_dirty()
 
     def update_customer_suggestions(self, text):
         """ 根据输入的文本更新客人建议列表
@@ -559,6 +686,7 @@ class OrderTab:
         # 同步 tab 名称和店铺
         self.app.update_tab_title(self, val)
         self.update_store_based_on_customer(val)
+        self.mark_draft_dirty()
 
 
     def apply_customer_selection(self):
@@ -578,6 +706,7 @@ class OrderTab:
 
         self.app.update_tab_title(self, val)
         self.update_store_based_on_customer(val)
+        self.mark_draft_dirty()
         self.hide_customer_suggestion()
 
     # ---------- 店铺、保存等 ----------
@@ -603,6 +732,7 @@ class OrderTab:
             self.store_combo.set(self.app.stores_by_id[sid])
             self.store_id = sid
             self.update_all_prices()
+            self.mark_draft_dirty()
         # 如果客人名称中包含的店号不存在，则使用默认店号（当前选择的店铺）
 
     def on_store_selected(self):
@@ -613,6 +743,7 @@ class OrderTab:
                 self.store_id = sid
                 break
         self.update_all_prices()
+        self.mark_draft_dirty()
 
     def update_all_prices(self):
         """根据当前店号更新所有产品行的单价和总价"""
@@ -680,15 +811,17 @@ class OrderTab:
             self.app.conn_saved.commit()
             # 清空当前表单
             self.customer_entry.delete(0, tk.END)
+            self.ship_time_entry.delete(0, tk.END)
             self.hide_customer_suggestion()
             self.app.update_tab_title(self, "")
-            self.update_date_entry()
+            self.set_current_datetime()
             for pr in self.entries:
                 pr.quantity_var.set('')
                 pr.model_var.set('')
                 pr.price_var.set('')
                 pr.total_var.set('')
             self.calculate_total_price()
+            self.app.save_drafts_now()
 
         except Exception as e:
             self.app.conn_saved.rollback()
@@ -726,21 +859,7 @@ class OrderTab:
 
     def update_date_entry(self):
         """更新日期为圣保罗时间（并记录 after id，便于取消）"""
-        sao_paulo_tz = ZoneInfo("America/Sao_Paulo")
-        current_time = datetime.now(sao_paulo_tz)
-        formatted_time = current_time.strftime("%d/%m/%Y %H:%M")
-        try:
-            self.date_entry.delete(0, tk.END)
-            self.date_entry.insert(0, formatted_time)
-        except Exception:
-            pass
-        # 每秒更新一次显示，记录 id
-        if getattr(self, "_date_after_id", None):
-            try:
-                self.root.after_cancel(self._date_after_id)
-            except Exception:
-                pass
-        self._date_after_id = self.root.after(1000, self.update_date_entry)
+        self.set_current_datetime()
 
     def cleanup(self):
         """关闭 tab 前的清理：取消定时器、隐藏/销毁 suggestion listboxes"""
@@ -815,24 +934,30 @@ class ProductEntryApp:
         # base dir
         self.BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+        self._draft_save_after_id = None
+        self._restoring_drafts = False
+        self.DRAFT_FILE = os.path.join(self.BASE_DIR, 'order_drafts.json')
+
         # 存放 tab 引用
         self.order_tabs = []
 
         # 先初始化数据库（OrderTab 需要共享 cursor）
         self.setup_databases()
 
-        # 载入店铺列表并在后续 tab 中填充（load_stores 会更新每个 tab 的 store_combo）
-        # 创建第一个订单 tab
-        self.create_new_order()
+        # 把 DB 店铺信息载入各 tab（若创建 tab 在 load_stores 之后会在 create_new_order 内处理）
+        self.load_stores()
+
+        # 先尝试恢复草稿；没有草稿时再创建空白订单页
+        if not self.restore_drafts():
+            # 载入店铺列表并在后续 tab 中填充（load_stores 会更新每个 tab 的 store_combo）
+            # 创建第一个订单 tab
+            self.create_new_order()
 
         # 快捷键 保存 Ctrl+S 保存当前 tab
         self.root.bind('<Control-s>', lambda e: self.save_current_order())
 
         # Ctrl+W 关闭当前 tab
         self.root.bind('<Control-w>', lambda e: self.close_current_tab())
-
-        # 把 DB 店铺信息载入各 tab（若创建 tab 在 load_stores 之后会在 create_new_order 内处理）
-        self.load_stores()
 
     # ---------- 窗口控制----------
     def start_move(self, event):
@@ -1038,9 +1163,14 @@ class ProductEntryApp:
             widgets[0].destroy()
         # 从列表移除
         self.order_tabs.remove(tab)
-        # 如果被选中，选中最后一个 tab（如果有）
+
+        # 如果还有 tab，切到最后一个；如果一个都没了，补一个空白页
         if self.order_tabs:
             self.select_tab(self.order_tabs[-1])
+        else:
+            self.create_new_order()
+
+        self.save_drafts_now()
 
     def close_current_tab(self):
         """关闭当前 tab（快捷键或右键菜单调用）"""
@@ -1076,9 +1206,97 @@ class ProductEntryApp:
         if tab:
             tab.save_data()
 
+    # ---------- 应用级草稿方法 ----------        
+
+    def schedule_draft_save(self):
+        """安排一次“延迟保存草稿”"""
+        if self._restoring_drafts:
+            return
+
+        if self._draft_save_after_id:
+            try:
+                self.root.after_cancel(self._draft_save_after_id)
+            except Exception:
+                pass
+
+        self._draft_save_after_id = self.root.after(1000, self.save_drafts_now)
+
+    def save_drafts_now(self):
+        """立即把所有有内容的订单页保存到草稿文件"""
+        if self._restoring_drafts:
+            return
+
+        if self._draft_save_after_id:
+            try:
+                self.root.after_cancel(self._draft_save_after_id)
+            except Exception:
+                pass
+            self._draft_save_after_id = None
+
+        meaningful_tabs = [tab for tab in self.order_tabs if tab.has_meaningful_data()]
+
+        if not meaningful_tabs:
+            if os.path.exists(self.DRAFT_FILE):
+                try:
+                    os.remove(self.DRAFT_FILE)
+                except Exception:
+                    pass
+            return
+
+        current_tab = self.get_current_tab()
+        current_tab_index = 0
+        if current_tab in meaningful_tabs:
+            current_tab_index = meaningful_tabs.index(current_tab)
+
+        payload = {
+            "version": 1,
+            "saved_at": datetime.now(ZoneInfo("America/Sao_Paulo")).isoformat(),
+            "current_tab_index": current_tab_index,
+            "tabs": [tab.get_draft_data() for tab in meaningful_tabs]
+        }
+
+        try:
+            with open(self.DRAFT_FILE, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"保存草稿失败: {e}")
+
+    def restore_drafts(self):
+        """启动程序时，尝试从草稿文件恢复所有未完成订单
+            恢复成功返回 True，没有草稿或恢复失败返回 False"""
+        if not os.path.exists(self.DRAFT_FILE):
+            return False
+
+        try:
+            with open(self.DRAFT_FILE, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+        except Exception:
+            return False
+
+        tabs_data = payload.get("tabs") or []
+        if not tabs_data:
+            return False
+
+        self._restoring_drafts = True
+        try:
+            for draft_data in tabs_data:
+                tab = self.create_new_order(title="新订单")
+                tab.apply_draft_data(draft_data)
+
+            current_tab_index = payload.get("current_tab_index", 0)
+            if self.order_tabs:
+                current_tab_index = max(0, min(current_tab_index, len(self.order_tabs) - 1))
+                self.select_tab(self.order_tabs[current_tab_index])
+
+            return True
+        finally:
+            self._restoring_drafts = False
+
     # ---------- 关闭程序 ----------
     def on_closing(self):
-        """关闭应用时关闭数据库连接"""
+        """关闭应用时先保存草稿，再关闭数据库连接"""
+        self.save_drafts_now()
+
         if hasattr(self, 'conn_main') and self.conn_main:
             self.conn_main.close()
         if hasattr(self, 'conn_saved') and self.conn_saved:

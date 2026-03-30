@@ -46,6 +46,7 @@ class OrderTab:
         self.customer_suggestion_listbox = None
         self.customer_scrollbar = None
         self.customer_suggestion_listbox_visible = False
+        self.customer_suggestion_index = -1
 
     # ---------- UI 构建 ----------
     def setup_ui(self, parent):
@@ -119,6 +120,7 @@ class OrderTab:
         self.customer_entry.pack(side='left', fill='x', expand=True)
         self.customer_entry.bind('<KeyRelease>', self.on_customer_keyrelease)
         self.customer_entry.bind('<Down>', self.on_customer_down_key)
+        self.customer_entry.bind('<Up>', self.on_customer_up_key)
         self.customer_entry.bind('<Return>', self.on_customer_enter)
         self.customer_entry.bind('<FocusOut>', self.on_customer_focus_out)
 
@@ -135,7 +137,7 @@ class OrderTab:
         self.customer_suggestion_listbox.bind("<ButtonRelease-1>", self.on_customer_listbox_click)
         self.customer_suggestion_listbox.bind("<<ListboxSelect>>", self.on_customer_listbox_select)
         self.customer_suggestion_listbox.bind("<Return>", self.on_customer_enter)
-        self.customer_suggestion_listbox.bind("<FocusOut>", lambda e: self.on_listbox_focus_out(e))
+        self.customer_suggestion_listbox.bind("<FocusOut>", self.on_listbox_focus_out)
 
         # 发货时间输入
         ship_frame = ttk.Frame(customer_frame)
@@ -422,6 +424,10 @@ class OrderTab:
     # ---------- 客人自动完成（在 root 层显示，防止被 canvas 遮挡） ----------
     def on_customer_keyrelease(self, event):
         """当在客人输入框中键盘释放时，更新建议列表"""
+
+        if event.keysym in ("Up", "Down", "Return", "Escape"):
+            return
+        
         text = self.customer_entry.get()
         if text == '':
             self.hide_customer_suggestion()
@@ -456,66 +462,123 @@ class OrderTab:
         self.customer_suggestion_listbox.delete(0, tk.END)
         for s in suggestions:
             self.customer_suggestion_listbox.insert(tk.END, s)
+
         x = self.customer_entry.winfo_rootx() - self.root.winfo_rootx()
         y = self.customer_entry.winfo_rooty() - self.root.winfo_rooty() + self.customer_entry.winfo_height()
         self.customer_suggestion_frame.place(x=x, y=y, width=self.customer_entry.winfo_width())
         self.customer_suggestion_frame.lift()
-        self.customer_suggestion_listbox.selection_set(0)
+
+        self.customer_suggestion_index = -1
+        self.customer_suggestion_listbox.selection_clear(0, tk.END)
+
         self.customer_suggestion_listbox_visible = True
 
     def hide_customer_suggestion(self):
         """隐藏客人自动完成"""
         self.customer_suggestion_frame.place_forget()
         self.customer_suggestion_listbox_visible = False
+        self.customer_suggestion_index = -1
 
     def on_customer_listbox_select(self, event):
-        """当选择客人Listbox中的一个选项时，填充到输入框"""
-        if not self.customer_suggestion_listbox.curselection():
+        """同步当前高亮索引，不直接确认"""
+        sel = self.customer_suggestion_listbox.curselection()
+        if sel:
+            self.customer_suggestion_index = sel[0]
+
+    def on_customer_listbox_click(self, event):
+        """鼠标点击时直接确认当前项"""
+        idx = self.customer_suggestion_listbox.nearest(event.y)
+        if idx < 0:
+            return "break"
+
+        self.customer_suggestion_listbox.selection_clear(0, tk.END)
+        self.customer_suggestion_listbox.selection_set(idx)
+        self.customer_suggestion_listbox.activate(idx)
+        self.customer_suggestion_index = idx
+
+        self.apply_customer_selection()
+        return "break"
+
+    def on_customer_down_key(self, event):
+        """当在客人输入框中按下Down键时，移动建议高亮，不切焦点"""
+        if self.customer_suggestion_listbox_visible:
+            self.move_customer_selection(1)
+            return "break"
+        
+    def on_customer_up_key(self, event):
+        """在输入框中按下 Up，移动建议高亮，不切焦点"""
+        if self.customer_suggestion_listbox_visible:
+            self.move_customer_selection(-1)
+            return "break"
+
+    def on_customer_enter(self, event):
+        """客人 Enter收起建议框"""
+        if self.customer_suggestion_listbox_visible:
+            self.hide_customer_suggestion()
+            return "break"
+
+    def on_customer_focus_out(self, event):
+        """延迟检查焦点，避免方向键/鼠标切换时误隐藏"""
+        self.root.after(1, self._check_customer_focus)
+
+    def on_listbox_focus_out(self, event):
+        """Listbox 失去焦点时延迟检查"""
+        self.root.after(1, self._check_customer_focus)
+
+    def _check_customer_focus(self):
+        widget = self.root.focus_get()
+        if widget in (self.customer_entry, self.customer_suggestion_listbox, self.customer_scrollbar):
             return
-        i = self.customer_suggestion_listbox.curselection()[0]
-        val = self.customer_suggestion_listbox.get(i)
+        self.hide_customer_suggestion()
+
+    def move_customer_selection(self, delta):
+        """在客人建议列表中移动高亮，并把当前客人实际改成高亮项"""
+        if not self.customer_suggestion_listbox_visible:
+            return
+
+        count = self.customer_suggestion_listbox.size()
+        if count <= 0:
+            return
+
+        if self.customer_suggestion_index < 0:
+            self.customer_suggestion_index = 0 if delta > 0 else count - 1
+        else:
+            self.customer_suggestion_index = (self.customer_suggestion_index + delta) % count
+
+        self.customer_suggestion_listbox.selection_clear(0, tk.END)
+        self.customer_suggestion_listbox.selection_set(self.customer_suggestion_index)
+        self.customer_suggestion_listbox.activate(self.customer_suggestion_index)
+        self.customer_suggestion_listbox.see(self.customer_suggestion_index)
+
+        # 关键：不是预览，而是实际修改当前客人
+        val = self.customer_suggestion_listbox.get(self.customer_suggestion_index)
         self.customer_entry.delete(0, tk.END)
         self.customer_entry.insert(0, val)
+        self.customer_entry.icursor(tk.END)
+
+        # 同步 tab 名称和店铺
+        self.app.update_tab_title(self, val)
+        self.update_store_based_on_customer(val)
+
+
+    def apply_customer_selection(self):
+        """确认当前高亮的客人建议"""
+        if not self.customer_suggestion_listbox_visible:
+            return
+
+        sel = self.customer_suggestion_listbox.curselection()
+        if not sel:
+            return
+
+        val = self.customer_suggestion_listbox.get(sel[0])
+        self.customer_entry.delete(0, tk.END)
+        self.customer_entry.insert(0, val)
+        self.customer_entry.focus_set()
+        self.customer_entry.icursor(tk.END)
+
         self.app.update_tab_title(self, val)
         self.update_store_based_on_customer(val)
         self.hide_customer_suggestion()
-
-    def on_customer_listbox_click(self, event):
-        """处理客人Listbox的点击事件"""
-        self.on_customer_listbox_select(event)
-
-    def on_customer_down_key(self, event):
-        """当在客人输入框中按下Down键时，焦点转移到Listbox"""
-        if self.customer_suggestion_listbox_visible:
-            self.customer_suggestion_listbox.focus_set()
-            self.customer_suggestion_listbox.selection_clear(0, tk.END)
-            self.customer_suggestion_listbox.selection_set(0)
-
-    def on_customer_enter(self, event):
-        """客人Enter确认选择"""
-        if not self.customer_suggestion_listbox_visible:
-            return
-        sel = self.customer_suggestion_listbox.curselection()
-        if sel:
-            val = self.customer_suggestion_listbox.get(sel[0])
-            self.customer_entry.delete(0, tk.END)
-            self.customer_entry.insert(0, val)
-            self.app.update_tab_title(self, val)
-            self.update_store_based_on_customer(val)
-        self.hide_customer_suggestion()
-
-    def on_customer_focus_out(self, event):
-        """检查焦点隐藏选择"""
-        widget = self.root.focus_get()
-        if widget in (self.customer_suggestion_listbox, self.customer_scrollbar):
-            return
-        self.hide_customer_suggestion()
-
-    def on_listbox_focus_out(self, event):
-        """Listbox 失去焦点时自动关闭"""
-        widget = self.root.focus_get()
-        if widget != self.customer_entry:
-            self.hide_customer_suggestion()
 
     # ---------- 店铺、保存等 ----------
     def extract_store_id_from_customer(self, customer_name):

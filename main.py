@@ -11,15 +11,21 @@ import re
 
 @dataclass
 class ProductRow:
-    quantity_var: tk.StringVar
-    model_var: tk.StringVar
-    price_var: tk.StringVar
-    total_var: tk.StringVar
-    model_entry: ttk.Entry = None
-    suggestion_listbox: tk.Listbox = None
-    suggestions: list = field(default_factory=list)
-    suggestion_index: int = -1
-    quantity_entry: ttk.Entry = None
+    # ===== 这一行产品对应的 4 个核心数据变量 =====
+    quantity_var: tk.StringVar      # 数量
+    model_var: tk.StringVar         # 型号
+    price_var: tk.StringVar         # 单价
+    total_var: tk.StringVar         # 该行总价 = 数量 × 单价
+
+    # ===== 这一行里部分控件的引用 =====
+    # 保存控件引用的目的，是为了后面做焦点跳转、弹出建议框定位、键盘操作等
+    model_entry: ttk.Entry = None       # 型号输入框
+    quantity_entry: ttk.Entry = None    # 数量输入框
+
+    # ===== 型号自动补全相关状态 =====
+    suggestion_listbox: tk.Listbox = None   # 当前这一行型号建议框
+    suggestions: list = field(default_factory=list)  # 当前建议项列表
+    suggestion_index: int = -1              # 当前高亮项索引，-1 表示还没选中任何项
 
 class OrderTab:
     """
@@ -27,27 +33,38 @@ class OrderTab:
     使用 app 提供的数据库连接与 store 列表（共享）。
     """
     def __init__(self, app, notebook, title="新订单"):
+        """app 是主程序对象 ProductEntryApp
+            通过它可以访问：
+            1. 主窗口 root
+            2. 数据库连接
+            3. 店铺数据
+            4. tab 管理方法"""
+
         self.app = app                # 指向主程序（共享 DB、stores）
         self.root = app.root
 
+        # 当前订单页自己的外层 frame
         self.frame = None
 
-        # 每个订单独立数据
-        self.entries = []
-        self.total_price_var = tk.StringVar(value="")
-        self.store_id = None
-        self._date_after_id = None
+        # ===== 当前订单页独立拥有的数据 =====
+        self.entries = []           # 存放当前订单页里所有 ProductRow(产品行)
+                                    # 也就是这个 tab 里的所有产品行
+        self.total_price_var = tk.StringVar(value="")   # 当前订单页的“所有产品总价”
+        self.store_id = None        # 当前订单页选中的店铺 ID
+        self._date_after_id = None  # after 定时器的任务 id
+                                    # 用来更新时间，也方便关闭 tab 时取消这个任务
 
-        # UI 元素占位（会在 setup_ui 中初始化）
-        self.store_combo = None
-        self.date_entry = None
-        self.customer_entry = None
-        self.customer_suggestion_frame = None
-        self.customer_suggestion_listbox = None
-        self.customer_scrollbar = None
-        self.customer_suggestion_listbox_visible = False
-        self.customer_suggestion_index = -1
-        self._restoring_state = False
+        # ===== 先UI 元素占位，后面 setup_ui() 再创建实际控件 =====
+        self.store_combo = None         # 店铺下拉框
+        self.date_entry = None          # 日期输入框
+        self.customer_entry = None      # 客人输入框
+        self.customer_suggestion_frame = None   # 客人自动补全框的外层容器
+        self.customer_suggestion_listbox = None # 客人自动补全的列表框
+        self.customer_scrollbar = None          # 自动补全框的滚动条
+        self.customer_suggestion_listbox_visible = False    # 当前客户建议框是否可见
+        self.customer_suggestion_index = -1     # 当前客户建议高亮项索引
+        self._restoring_state = False   # 是否处于“恢复草稿/恢复界面状态”的过程中
+                                        # 恢复时通常要避免触发自动保存、自动刷新等副作用
 
     # ---------- UI 构建 ----------
     def setup_ui(self, parent):
@@ -889,12 +906,15 @@ class OrderTab:
 class ProductEntryApp:
     def __init__(self, root):
         self.root = root
+
+        # ===== 主窗口基础设置 =====
         self.root.title("订单系统")
         self.root.geometry("480x720")
-        self.root.overrideredirect(True)
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        self.root.attributes("-topmost", False)
+        self.root.overrideredirect(True)        # 去掉系统原生标题栏，后面自己画一个自定义标题栏
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing) # 点击关闭窗口时，执行自己的关闭逻辑
+        self.root.attributes("-topmost", False) # 默认不置顶
 
+        # ===== 自定义标题栏 =====
         # TitleBar（放自定义 tab 按钮 + 窗口控制）
         self.title_bar = tk.Frame(self.root, bg="#f0f0f0", height=36)
         self.title_bar.pack(side="top", fill="x")
@@ -919,10 +939,12 @@ class ProductEntryApp:
         close_btn.pack(side="right", padx=2, pady=4)
         min_btn.pack(side="right", padx=2, pady=4)
 
-        # 标题栏下方：主内容区（页面将在这里切换显示）
+        # ===== 主内容区 =====
+        # 每个订单 tab 的页面内容都显示在这里
         self.content_frame = tk.Frame(self.root)
         self.content_frame.pack(side="top", fill="both", expand=True)
 
+        # ===== tab 管理相关 =====
         # 存放 OrderTab 和 其对应的 tab 按钮引用
         self.order_tabs = []        # 列表 of OrderTab
         self.tab_button_widgets = {}   # tab -> (button_frame, label_btn, close_btn)
@@ -931,33 +953,30 @@ class ProductEntryApp:
         self.plus_button = tk.Button(self.tab_buttons_frame, text="+", command=lambda: self.create_new_order())
         self.plus_button.pack(side="left", padx=(6,2), pady=4)
 
-        # base dir
-        self.BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        # ===== 当前脚本所在目录 =====
+        self.BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # base dir
 
-        self._draft_save_after_id = None
-        self._restoring_drafts = False
-        self.DRAFT_FILE = os.path.join(self.BASE_DIR, 'order_drafts.json')
+        # ===== 草稿保存相关 =====
+        self._draft_save_after_id = None    # 自动保存草稿的延迟任务 id
+        self._restoring_drafts = False      # 是否正在恢复草稿
+        self.DRAFT_FILE = os.path.join(self.BASE_DIR, 'order_drafts.json')  # 草稿文件路径
 
-        # 存放 tab 引用
-        self.order_tabs = []
+        # ===== 初始化数据库 =====
+        self.setup_databases()  # 先初始化数据库（OrderTab 需要共享 cursor）
 
-        # 先初始化数据库（OrderTab 需要共享 cursor）
-        self.setup_databases()
+        # ===== 加载店铺数据 =====
+        self.load_stores()      # 把数据库里的店铺列表读出来
 
-        # 把 DB 店铺信息载入各 tab（若创建 tab 在 load_stores 之后会在 create_new_order 内处理）
-        self.load_stores()
-
+        # ===== 启动时优先恢复草稿 =====
         # 先尝试恢复草稿；没有草稿时再创建空白订单页
         if not self.restore_drafts():
             # 载入店铺列表并在后续 tab 中填充（load_stores 会更新每个 tab 的 store_combo）
             # 创建第一个订单 tab
             self.create_new_order()
 
-        # 快捷键 保存 Ctrl+S 保存当前 tab
-        self.root.bind('<Control-s>', lambda e: self.save_current_order())
-
-        # Ctrl+W 关闭当前 tab
-        self.root.bind('<Control-w>', lambda e: self.close_current_tab())
+        # ===== 快捷键 =====
+        self.root.bind('<Control-s>', lambda e: self.save_current_order())  # 快捷键 保存 Ctrl+S 保存当前 tab
+        self.root.bind('<Control-w>', lambda e: self.close_current_tab())   # Ctrl+W 关闭当前 tab
 
     # ---------- 窗口控制----------
     def start_move(self, event):

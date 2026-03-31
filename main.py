@@ -953,8 +953,11 @@ class ProductEntryApp:
         self.plus_button = tk.Button(self.tab_buttons_frame, text="+", command=lambda: self.create_new_order())
         self.plus_button.pack(side="left", padx=(6,2), pady=4)
 
-        # ===== 当前脚本所在目录 =====
-        self.BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # base dir
+        # ===== 路径相关 =====
+        if getattr(sys, 'frozen', False):
+            self.BASE_DIR = os.path.dirname(sys.executable)
+        else:
+            self.BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # base dir(基本目录)
 
         # ===== 草稿保存相关 =====
         self._draft_save_after_id = None    # 自动保存草稿的延迟任务 id

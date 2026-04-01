@@ -14,19 +14,17 @@ from zoneinfo import ZoneInfo
 
 
 # ===== 全局配置 =====
-# 这些值本来在原始代码里是分散写死的。
-# 现在统一提到文件顶部，后面想改默认值时，只需要改这里即可。
-APP_TIMEZONE = ZoneInfo("America/Sao_Paulo")  # 统一使用圣保罗时区
+APP_TIMEZONE = ZoneInfo("America/Sao_Paulo")    # 统一使用圣保罗时区
 DEFAULT_TAB_TITLE = "新订单"                    # 新标签页默认标题
-DEFAULT_ROW_COUNT = 16                        # 每个订单页默认创建的产品行数
-DRAFT_SAVE_DELAY_MS = 1000                    # 草稿延迟保存时间（毫秒）
-TAB_TITLE_MAX_LEN = 3                         # tab 标题最多显示多少个字符
+DEFAULT_ROW_COUNT = 16                          # 每个订单页默认创建的产品行数
+DRAFT_SAVE_DELAY_MS = 1000                      # 草稿延迟保存时间（毫秒）
+TAB_TITLE_MAX_LEN = 3                           # tab 标题最多显示多少个字符
 
 
 @dataclass
 class ProductRow:
     """
-    这一层不是完整业务类，更像“表格中一行产品的状态对象”。
+    表格中一行产品的状态对象
 
     作用：
     1. 保存这一行对应的 4 个核心数据变量
@@ -54,23 +52,16 @@ class OrderTab:
     """
     每个标签（订单）的封装：独立 UI、独立数据（entries、total_price_var、store_id）；
     使用 app 提供的数据库连接与店铺列表（共享）。
-
-    优化后没有改变它的业务定位：
-    它仍然是“单个订单页控制器”。
-    只是把原来过长的方法拆小，让职责边界更清楚。
     """
 
     def __init__(self, app, notebook=None, title=DEFAULT_TAB_TITLE):
         """app 是主程序对象 ProductEntryApp
-        通过它可以访问：
-        1. 主窗口 root
-        2. 数据库连接
-        3. 店铺数据
-        4. tab 管理方法
+            通过它可以访问：
+            1. 主窗口 root
+            2. 数据库连接
+            3. 店铺数据
+            4. tab 管理方法 """
 
-        这里比原版多了一些“属性占位”：
-        目的不是增加功能，而是让对象状态更完整、调试更方便。
-        """
         self.app = app                # 指向主程序（共享 DB、stores）
         self.root = app.root
         self.notebook = notebook      # 预留参数；当前自定义 tab 方案里实际没使用 ttk.Notebook

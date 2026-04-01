@@ -98,10 +98,6 @@ class OrderTab:
     # ---------- UI 构建 ----------
     def setup_ui(self, parent):
         """在 parent 内建立订单页面
-
-        这里是这次重构的一个重点：
-        原来所有 UI 都堆在 setup_ui() 一个方法里，方法很长。
-        现在拆成多个 _build_xxx() 小方法，方便后面单独修改某一块界面。
         """
         # 主框架
         self.main_frame = ttk.Frame(parent)
@@ -114,7 +110,7 @@ class OrderTab:
         self._build_total_section()           # 总价显示
         self._build_table_section()           # 商品表格区（Canvas + Frame）
 
-        # 默认添加若干行（原来直接写死 16；现在提到常量里）
+        # 默认添加若干行
         for _ in range(DEFAULT_ROW_COUNT):
             self.add_row()
 
@@ -136,6 +132,7 @@ class OrderTab:
         ttk.Label(text_frame, text="📞: (11)95066-6669 Ting", font=("Arial", 9)).pack(anchor="w")
         ttk.Label(text_frame, text="📞: (11)99798-8888 Henney", font=("Arial", 9)).pack(anchor="w")
 
+        # 按钮区域（垂直放置在右上角）
         button_frame = ttk.Frame(top_frame)
         button_frame.pack(side="right", anchor="n", padx=8)
 
@@ -147,11 +144,6 @@ class OrderTab:
 
     def _build_logo_label(self, parent):
         """尝试加载 Logo；失败时使用文本占位
-
-        这里是优化点之一：
-        原版直接用 os.path.join(self.app.BASE_DIR, ...)
-        现在统一走 self.app.resource_path(...)，
-        这样图片、数据库、草稿文件的路径策略就统一了。
         """
         logo_path = self.app.resource_path("HUANG_Logo.PNG")
         try:
@@ -234,10 +226,6 @@ class OrderTab:
 
     def _build_table_section(self):
         """构建商品表格区：Canvas + 内部 Frame + 滚动条
-
-        这里保留了你原来的大方向：
-        表格不是直接塞在普通 Frame 里，而是塞进 Canvas，
-        这样产品行很多时可以滚动。
         """
         self.canvas = tk.Canvas(self.main_frame, borderwidth=0)
         self.scrollbar = ttk.Scrollbar(self.main_frame, orient="vertical", command=self.canvas.yview)
@@ -315,10 +303,10 @@ class OrderTab:
         self.store_id = self.app.store_name_to_id.get(store_name)
 
     # ---------- 表格与行控制 ----------
-    # 表头只创建一次，后续 add_row() 添加的都是数据行。
-    # 这里把列名和列宽集中写在一起，后面改表头布局时更容易统一调整。
     def create_table_headers(self):
-        """创建表格头"""
+        """创建表格头
+            表头只创建一次，后续 add_row() 添加的都是数据行。
+            这里把列名和列宽集中写在一起，后面改表头布局时更容易统一调整。"""
         headers = ["数量", "型号", "单价", "型号总价"]
         column_widths = [8, 18, 8, 12]
         for idx, header in enumerate(headers):
@@ -329,10 +317,10 @@ class OrderTab:
                 width=column_widths[idx],
             ).grid(row=0, column=idx, sticky="w", padx=2, pady=2)
 
-    # 每调用一次 add_row()，就向当前订单页追加一行商品输入。
-    # 这里返回 product_row，方便后面如果要“新增一行后立刻聚焦”之类的扩展。
     def add_row(self):
-        """添加一行产品输入"""
+        """添加一行产品输入
+            每调用一次 add_row()，就向当前订单页追加一行商品输入。
+            这里返回 product_row，方便后面如果要“新增一行后立刻聚焦”之类的扩展。"""
         row_index = len(self.entries) + 1
         # 为每个 tab 的变量设定 master 为该 tab 的 table_frame，
         # 避免不同 tab 变量混用。
@@ -346,13 +334,11 @@ class OrderTab:
         self.entries.append(product_row)
         return product_row
 
-    # 真正把 ProductRow 变成界面控件的地方。
-    # 这一层做了三件事：
-    # 1. 创建输入框并放到 grid 中
-    # 2. 保存关键控件引用（数量框、型号框）
-    # 3. 绑定变量联动和键盘事件
     def create_product_row_widgets(self, row_index, product_row):
-        """创建单行产品输入控件"""
+        """创建单行产品输入控件
+            1. 创建输入框并放到 grid 中
+            2. 保存关键控件引用（数量框、型号框）
+            3. 绑定变量联动和键盘事件"""
         vars_list = [product_row.quantity_var, product_row.model_var, product_row.price_var, product_row.total_var]
         column_widths = [8, 18, 8, 12]
 
@@ -382,11 +368,11 @@ class OrderTab:
 
         product_row.model_entry.bind("<KeyRelease>", lambda e, pr=product_row: self.on_model_entry_keyrelease(e, pr))
 
-    # 方向键导航：让表格里的输入框像表格一样上下左右移动。
-    # 但如果当前型号建议框正开着，上下键就优先交给建议框处理，
-    # 否则用户想选建议项时会被直接切走焦点。
     def navigate_entry(self, event, product_row, column):
-        """处理方向键在各个输入框之间进行切换的操作"""
+        """处理方向键在各个输入框之间进行切换的操作
+            方向键导航：让表格里的输入框像表格一样上下左右移动。
+            但如果当前型号建议框正开着，上下键就优先交给建议框处理，
+            否则用户想选建议项时会被直接切走焦点。"""
         # 如果当前这一行有 suggestion listbox 可见，优先让建议框处理方向键
         if product_row.suggestion_listbox and product_row.suggestion_listbox.winfo_viewable():
             return
@@ -417,9 +403,6 @@ class OrderTab:
         return "break"
 
     # ---------- 型号建议 & 价格查询 ----------
-    # 型号变量一变，就决定两件事：
-    # 1. 是否要弹出/更新型号建议
-    # 2. 如果型号被清空，顺手把该行单价也清空
     def on_model_var_change(self, product_row):
         """当型号变量改变时更新建议列表或清空相关字段"""
         if self._restoring_state:
@@ -435,11 +418,10 @@ class OrderTab:
 
         self.mark_draft_dirty()
 
-    # 型号输入框的键盘入口。
-    # 普通字符：走“重新查建议”
-    # 上下/回车/Esc：走“操作建议框”
     def on_model_entry_keyrelease(self, event, product_row):
-        """处理型号输入框的键盘事件"""
+        """处理型号输入框的键盘事件
+            普通字符：走“重新查建议”
+            上下/回车/Esc：走“操作建议框”"""
         if event.keysym in ("Up", "Down", "Return", "Escape"):
             if product_row.suggestion_listbox and product_row.suggestion_listbox.winfo_viewable():
                 if event.keysym == "Up":
@@ -494,10 +476,10 @@ class OrderTab:
         product_row.suggestion_listbox.place(x=x, y=y, width=entry.winfo_width())
         product_row.suggestion_index = -1
 
-    # 统一关闭某一行的型号建议框，并把建议状态清空。
-    # 以后只要需要“收起建议框”，都尽量走这个方法，避免销毁逻辑写散。
     def hide_suggestion_listbox(self, product_row):
-        """隐藏建议列表框"""
+        """隐藏建议列表框
+            统一关闭某一行的型号建议框，并把建议状态清空。
+            以后只要需要“收起建议框”，都尽量走这个方法，避免销毁逻辑写散。"""
         if product_row.suggestion_listbox:
             product_row.suggestion_listbox.place_forget()
             product_row.suggestion_listbox.destroy()
@@ -505,9 +487,9 @@ class OrderTab:
         product_row.suggestions = []
         product_row.suggestion_index = -1
 
-    # 在型号建议列表中移动高亮项。
-    # 这里只改“高亮位置”，不直接确认；确认动作交给 select_suggestion()。
     def move_in_suggestions(self, product_row, delta):
+        """在型号建议列表中移动高亮项选择
+            这里只改“高亮位置”，不直接确认；确认动作交给 select_suggestion()"""
         if not product_row.suggestions or not product_row.suggestion_listbox:
             return
 
@@ -521,10 +503,10 @@ class OrderTab:
         product_row.suggestion_listbox.selection_set(product_row.suggestion_index)
         product_row.suggestion_listbox.activate(product_row.suggestion_index)
 
-    # 确认当前高亮的型号建议。
-    # 一旦确认：写回型号 -> 关闭建议框 -> 自动查单价。
     def select_suggestion(self, product_row):
-        """选择建议列表中的型号"""
+        """选择建议列表中的型号
+            确认当前高亮的型号建议。
+            一旦确认：写回型号 -> 关闭建议框 -> 自动查单价"""
         if product_row.suggestions and product_row.suggestion_index >= 0:
             selected = product_row.suggestions[product_row.suggestion_index]
             product_row.model_var.set(selected)
@@ -535,9 +517,10 @@ class OrderTab:
         """处理 Listbox 选择事件（这里不直接做额外动作）"""
         pass
 
-    # 鼠标点击型号建议时，直接把点击项作为最终结果。
-    # 这和键盘回车确认的业务效果是一致的。
     def on_listbox_click(self, product_row, event):
+        """处理Listbox点击事件
+            鼠标点击型号建议时，直接把点击项作为最终结果。
+            这和键盘回车确认的业务效果是一致的。"""
         if not product_row.suggestion_listbox:
             return
 
@@ -549,11 +532,8 @@ class OrderTab:
 
     def fetch_price(self, product_row):
         """根据型号获取价格并更新
-
-        优化点：
-        原版这里直接写 SQL。
-        现在统一走 self.app.get_product_price(...)。
-        """
+            走 self.app.get_product_price(...)。"""
+        
         model = self._get_var_text(product_row.model_var)
         price = self.app.get_product_price(model, self.store_id)
         product_row.price_var.set("" if price is None else f"{price:.2f}")
@@ -561,9 +541,6 @@ class OrderTab:
 
     def update_total_price(self, product_row, recalculate_order_total=True):
         """更新单行和总价
-
-        recalculate_order_total 是这次新增的参数。
-        作用：
         - 平时改单行时，保持原来的行为：顺手重算整单总价
         - 批量更新所有行价格时，可以先只算每一行，最后统一整单重算一次
         """
@@ -585,8 +562,6 @@ class OrderTab:
         if recalculate_order_total:
             self.calculate_total_price()
 
-    # 整单总价汇总入口。
-    # 这里只统计“有型号”的行；空行不参与汇总。
     def calculate_total_price(self):
         """计算所有产品的总价"""
         total = 0.0
@@ -603,48 +578,40 @@ class OrderTab:
 
     # ---------- 草稿相关 ----------
     def on_quantity_or_price_change(self, product_row):
+        """当“数量”或“单价”发生变化时调用
+            作用：
+            1. 重新计算这一行的小计和整单总价
+            2. 标记当前订单页需要保存草稿"""
         if self._restoring_state:
             return
         self.update_total_price(product_row)
         self.mark_draft_dirty()
 
-    # 标记当前页“草稿已变脏”。
-    # 注意这里仍然不直接写磁盘，而是交给 app 统一做防抖保存。
     def mark_draft_dirty(self):
         """标记当前订单页“草稿已变脏”
-
         注意：这里不直接保存，而是交给 app 统一做延迟保存。
         """
         if self._restoring_state or self.app._restoring_drafts:
             return
         self.app.schedule_draft_save()
 
-    # 统一生成当前时间文本。
-    # 单独抽成方法后：
-    # - 设置默认日期
-    # - 草稿恢复缺省日期
-    # 这些地方都能复用同一套格式。
     def get_current_datetime_text(self):
-        """获取当前圣保罗时间，并格式化成字符串"""
+        """统一生成当前时间文本
+            获取当前圣保罗时间，并格式化成字符串"""
         return datetime.now(APP_TIMEZONE).strftime("%d/%m/%Y %H:%M")
 
-    # 向日期输入框写值的统一入口。
-    # 这样后面如果日期框改成别的控件，改动面会更小。
     def set_date_value(self, value):
-        """设置“日期输入框”的值"""
+        """向日期输入框写值的统一入口"""
         self._set_entry_text(self.date_entry, value)
 
-    # 把日期框重置为“现在”。
-    # 保存成功后清表、首次建页时都会用到。
     def set_current_datetime(self):
-        """把日期输入框设置为“当前时间”"""
+        """把日期输入框设置为“当前时间
+            保存成功后清表、首次建页时都会用到。”"""
         self.set_date_value(self.get_current_datetime_text())
 
-    # 判断当前 tab 是否“值得保存成草稿”。
-    # 只要客人、发货时间或任意一行商品有内容，就认为这个页有意义。
     def has_meaningful_data(self):
-        """判断当前这个订单页是否“真的有内容”
-        只有有内容的 tab 才值得保存成草稿。
+        """判断当前 tab 是否“值得保存成草稿”
+            只要客人、发货时间或任意一行商品有内容，就认为这个页有意义
         """
         if self.customer_entry.get().strip():
             return True
@@ -659,22 +626,24 @@ class OrderTab:
             for product_row in self.entries
         )
 
-    # 把当前订单页序列化成一个纯字典，供 JSON 草稿保存使用。
-    # 这里不保存控件对象，只保存真正需要恢复的数据。
     def get_draft_data(self):
+        """把当前订单页导出为“可保存的草稿数据”
+            把当前订单页序列化成一个纯字典，供 JSON 草稿保存使用。
+            这里不保存控件对象，只保存真正需要恢复的数据。"""
+        # 把每一行产品数据都收集起来
         rows = [
             {
-                "quantity": product_row.quantity_var.get(),
-                "model": product_row.model_var.get(),
-                "price": product_row.price_var.get(),
-                "total": product_row.total_var.get(),
+                "quantity": product_row.quantity_var.get(), # 数量
+                "model": product_row.model_var.get(),       # 型号
+                "price": product_row.price_var.get(),       # 单价
+                "total": product_row.total_var.get(),       # 该行总价
             }
             for product_row in self.entries
         ]
 
         # 返回整个订单页的数据结构
         return {
-            "store_id": self.store_id,                # 当前店铺 ID
+            "store_id": self.store_id,               # 当前店铺 ID
             "store_name": self.store_combo.get(),    # 当前店铺名称（双保险）
             "date": self.date_entry.get(),           # 日期
             "customer": self.customer_entry.get(),   # 客人
@@ -682,10 +651,10 @@ class OrderTab:
             "rows": rows,                            # 所有产品行
         }
 
-    # 把草稿字典重新灌回当前订单页。
-    # 这里一定要先进入 _restoring_state，避免回填过程中触发联动保存。
     def apply_draft_data(self, draft_data):
-        """把一份草稿数据重新恢复到当前订单页界面"""
+        """把一份草稿数据重新恢复到当前订单页界面
+            把草稿字典重新灌回当前订单页。
+            这里一定要先进入 _restoring_state，避免回填过程中触发联动保存。"""
         self._restoring_state = True
         try:
             store_id = draft_data.get("store_id")
@@ -721,33 +690,29 @@ class OrderTab:
             self._restoring_state = False
 
     # ---------- 客人自动完成 ----------
-    # 客人输入框的主入口：
-    # - 普通输入：刷新 tab 名、刷新建议
-    # - 上下/回车/Esc：交给其他专门方法处理
     def on_customer_keyrelease(self, event):
-        """当在客人输入框中键盘释放时，更新建议列表"""
+        """客人输入框的主入口：
+        - 普通输入：刷新 tab 名、刷新建议
+        - 上下/回车/Esc：交给其他专门方法处理"""
         if event.keysym in ("Up", "Down", "Return", "Escape"):
             return
 
         text = self.customer_entry.get()
         if text == "":
             self.hide_customer_suggestion()
+            # 更新 tab 名称为空或默认
             self.app.update_tab_title(self, DEFAULT_TAB_TITLE)
             self.mark_draft_dirty()
             return
 
+        # 动态更新 tab 名称为输入值（即时）
         self.app.update_tab_title(self, text)
         self.update_customer_suggestions(text)
         self.mark_draft_dirty()
 
-    # 根据客人输入文本去历史订单里查建议。
-    # 这次优化后，真正的 SQL 已经收口到 app.get_customer_suggestions()。
     def update_customer_suggestions(self, text):
-        """根据输入文本更新客人建议列表
-
-        优化点：
-        原版直接在这里查 saved_data.db。
-        现在改成调用 self.app.get_customer_suggestions(text)。
+        """根据客人输入文本去历史订单里查建议。
+        调用 self.app.get_customer_suggestions(text)。
         """
         suggestions = self.app.get_customer_suggestions(text)
         if suggestions:
@@ -755,10 +720,8 @@ class OrderTab:
         else:
             self.hide_customer_suggestion()
 
-    # 显示客人自动完成框，并把它定位到客人输入框正下方。
-    # 由于建议框挂在 root 层，所以不容易被表格 canvas 遮住。
     def show_customer_suggestion(self, suggestions):
-        """显示客人自动完成框"""
+        """显示客人自动完成框，并把它定位到客人输入框正下方"""
         self.customer_suggestion_listbox.delete(0, tk.END)
         for suggestion in suggestions:
             self.customer_suggestion_listbox.insert(tk.END, suggestion)
@@ -772,22 +735,19 @@ class OrderTab:
         self.customer_suggestion_listbox.selection_clear(0, tk.END)
         self.customer_suggestion_listbox_visible = True
 
-    # 统一隐藏客人建议框，并清空“当前高亮索引”。
     def hide_customer_suggestion(self):
-        """隐藏客人自动完成"""
+        """统一隐藏客人建议框，并清空“当前高亮索引”"""
         self.customer_suggestion_frame.place_forget()
         self.customer_suggestion_listbox_visible = False
         self.customer_suggestion_index = -1
 
-    # 这里只同步高亮索引，不立刻确认。
-    # 真正确认由点击事件或 apply_customer_selection() 完成。
     def on_customer_listbox_select(self, event):
-        """同步当前高亮索引，不直接确认"""
+        """同步当前高亮索引，不立刻确认
+            真正确认由点击事件或 apply_customer_selection() 完成"""
         selection = self.customer_suggestion_listbox.curselection()
         if selection:
             self.customer_suggestion_index = selection[0]
 
-    # 鼠标点击客人建议时，直接把当前项视为最终结果。
     def on_customer_listbox_click(self, event):
         """鼠标点击时直接确认当前项"""
         idx = self.customer_suggestion_listbox.nearest(event.y)
@@ -802,52 +762,44 @@ class OrderTab:
         self.apply_customer_selection()
         return "break"
 
-    # 在客人输入框内按下 Down 时，不把焦点切走，而是移动建议高亮。
     def on_customer_down_key(self, event):
         """当在客人输入框中按下 Down 键时，移动建议高亮，不切焦点"""
         if self.customer_suggestion_listbox_visible:
             self.move_customer_selection(1)
             return "break"
 
-    # 在客人输入框内按下 Up 时，同样只移动建议高亮。
     def on_customer_up_key(self, event):
         """在输入框中按下 Up 键，移动建议高亮，不切焦点"""
         if self.customer_suggestion_listbox_visible:
             self.move_customer_selection(-1)
             return "break"
 
-    # Enter 在这里的策略比较保守：有建议框时先收起，不额外切焦点。
     def on_customer_enter(self, event):
         """客人 Enter：收起建议框"""
         if self.customer_suggestion_listbox_visible:
             self.hide_customer_suggestion()
             return "break"
 
-    # 失焦时不立刻隐藏建议框，而是 after 一下再检查。
-    # 这样方向键或鼠标切换时，不会出现误判闪退。
     def on_customer_focus_out(self, event):
-        """延迟检查焦点，避免方向键/鼠标切换时误隐藏"""
+        """延迟检查焦点，避免方向键/鼠标切换时误隐藏
+            失焦时不立刻隐藏建议框，而是 after 一下再检查"""
         self.root.after(1, self._check_customer_focus)
 
-    # Listbox 失焦也走同样的延迟检查逻辑。
     def on_listbox_focus_out(self, event):
-        """Listbox 失去焦点时延迟检查"""
+        """Listbox 失焦也走同样的延迟检查逻辑"""
         self.root.after(1, self._check_customer_focus)
 
-    # 统一检查“焦点是不是还在客人输入相关区域里”。
-    # 只有完全离开输入框 / listbox / 滚动条时，才真正隐藏建议框。
     def _check_customer_focus(self):
-        """检查当前焦点是否仍在客人输入/建议框相关控件上"""
+        """统一检查焦点是否仍在客人输入/建议框相关控件上
+            只有完全离开输入框 / listbox / 滚动条时，才真正隐藏建议框。"""
         widget = self.root.focus_get()
         if widget in (self.customer_entry, self.customer_suggestion_listbox, self.customer_scrollbar):
             return
         self.hide_customer_suggestion()
 
-    # 在客人建议中移动高亮。
-    # 按你的需求，这里不是“预览”，而是直接把高亮项写回输入框，
-    # 也就是说当前客人会实时变成高亮项。
     def move_customer_selection(self, delta):
-        """在客人建议列表中移动高亮，并把当前客人实际改成高亮项"""
+        """在客人建议列表中移动高亮
+            直接把高亮项写回输入框"""
         if not self.customer_suggestion_listbox_visible:
             return
 
@@ -865,14 +817,13 @@ class OrderTab:
         self.customer_suggestion_listbox.activate(self.customer_suggestion_index)
         self.customer_suggestion_listbox.see(self.customer_suggestion_index)
 
-        # 关键：不是预览，而是实际修改当前客人
+        # 修改当前客人
         value = self.customer_suggestion_listbox.get(self.customer_suggestion_index)
         self._apply_customer_value(value)
 
-    # 最终确认当前客人建议项。
-    # 这一步会把焦点放回输入框，并收起建议框。
     def apply_customer_selection(self):
-        """确认当前高亮的客人建议"""
+        """确认当前高亮的客人建议
+            把焦点放回输入框，并收起建议框"""
         if not self.customer_suggestion_listbox_visible:
             return
 
@@ -884,8 +835,6 @@ class OrderTab:
         self._apply_customer_value(value, keep_focus=True, hide_suggestion=True)
 
     # ---------- 店铺、保存等 ----------
-    # 从客人字符串里解析店号。
-    # 约定格式仍然是“店号 客人名”，例如：123 Alice。
     def extract_store_id_from_customer(self, customer_name):
         """从客人名称中提取店号。
         假设输入格式为“店号 客人”，例如 “123 Alice”。
@@ -896,15 +845,14 @@ class OrderTab:
             return self.app.stores_by_number.get(tokens[0])
         return None
 
-    # 通过店铺 id 反查店铺名；本质上是 stores_by_id 的一层封装。
     def get_store_name_by_id(self, store_id):
-        """根据店号 ID 获取店铺名称"""
+        """通过店铺 id 反查店铺名"""
         return self.app.stores_by_id.get(store_id, "")
 
-    # 当客人名里带有店号时，自动同步当前店铺。
-    # 同步后要立即刷新所有商品价格，因为不同店铺价格可能不同。
     def update_store_based_on_customer(self, customer_name):
-        """根据客人名称中包含的店号自动更新店号"""
+        """当客人名里带有店号时，自动同步当前店铺
+            同步后要立即刷新所有商品价格，因为不同店铺价格可能不同
+            如果客人名称中包含的店号不存在，则使用默认店号（当前选择的店铺）"""
         store_id = self.extract_store_id_from_customer(customer_name)
         if store_id and store_id in self.app.stores_by_id:
             self.store_combo.set(self.app.stores_by_id[store_id])
@@ -912,28 +860,17 @@ class OrderTab:
             self.update_all_prices()
             self.mark_draft_dirty()
 
-    # 手动切换店铺时：
-    # 1. 同步 store_id
-    # 2. 刷新所有已有商品的单价
-    # 3. 标记草稿已变更
     def on_store_selected(self):
-        """当选择店铺时，更新 store_id 并更新所有产品行的单价"""
-        # 优化点：这里改为调用 _sync_store_from_combo()，
-        # 不再每次遍历 stores_by_id 做反向查找。
+        """手动切换店铺
+        1. 同步 store_id
+        2. 刷新所有已有商品的单价
+        3. 标记草稿已变更"""
         self._sync_store_from_combo()
         self.update_all_prices()
         self.mark_draft_dirty()
 
-    # 根据当前店铺，批量刷新所有产品行的价格。
-    # 这里是这次性能优化的重要点：
-    # 每一行只重算“小计”，最后再统一重算整单总价一次。
     def update_all_prices(self):
         """根据当前店号更新所有产品行的单价和总价
-
-        这是这次优化里很重要的性能点：
-        原版每更新一行价格，都会顺手重算一次整单总价，
-        批量刷新时会造成很多次重复扫描。
-        现在改成：
         1. 逐行更新价格和行总价
         2. 最后统一 calculate_total_price() 一次
         """
@@ -946,12 +883,11 @@ class OrderTab:
         # 所有行处理完后，再统一整单重算一次
         self.calculate_total_price()
 
-    # 保存前先把所有商品行收集成纯数据。
-    # 这样 save_data() 就不用同时负责“取值 + 校验 + 入库”，职责更清晰。
     def _collect_product_data(self):
         """收集当前表单里的产品数据，并做基础数值校验
 
-        这是从 save_data() 中拆出来的新方法。
+        保存前先把所有商品行收集成纯数据。
+        这样 save_data() 就不用同时负责“取值 + 校验 + 入库”，职责更清晰。
         目的：把“收集数据”和“保存到数据库”拆开，减少 save_data() 的负担。
         """
         product_data = []
@@ -975,13 +911,10 @@ class OrderTab:
 
         return product_data
 
-    # 保存成功后，统一清空当前订单页。
-    # 进入 _restoring_state 是为了防止批量清空时反复触发联动逻辑。
     def clear_form(self):
         """清空当前订单页表单
-
-        这是重构新增的方法。
-        保存成功后原来是一大段重复清空逻辑，现在独立出来，方便复用。
+        1. 进入 _restoring_state，避免触发联动保存
+        2. 保存成功后 清空客人、发货时间输入框，隐藏客人建议
         """
         self._restoring_state = True
         try:
@@ -998,10 +931,9 @@ class OrderTab:
         finally:
             self._restoring_state = False
 
-    # 把当前 tab 的数据保存到 saved_data.db。
-    # 保存流程被整理成：校验 -> 收集产品 -> 写主表 -> 批量写明细 -> 清空表单。
     def save_data(self):
-        """把当前 tab 的数据保存到 saved_data.db"""
+        """把当前 tab 的数据保存到 saved_data.db
+            保存流程被整理成：校验 -> 收集产品 -> 写主表 -> 批量写明细 -> 清空表单。"""
         if not self.app.conn_saved:
             messagebox.showerror("数据库错误", "保存数据库未连接")
             return
@@ -1035,9 +967,7 @@ class OrderTab:
             )
             entry_id = cursor.lastrowid
 
-            # 优化点：
-            # 原版是 for row in product_data: 一条条 execute()
-            # 现在改成先准备整批数据，再 executemany() 批量写入。
+            # 先准备整批数据，再 executemany() 批量写入。
             rows_to_insert = [(entry_id, quantity, model, price, total) for quantity, model, price, total in product_data]
             cursor.executemany(
                 "INSERT INTO products (entry_id, quantity, model, price, total_price) VALUES (?, ?, ?, ?, ?)",
@@ -1052,15 +982,14 @@ class OrderTab:
             self.app.conn_saved.rollback()
             messagebox.showerror("数据库错误", f"保存失败: {exc}")
 
-    # 给订单页内部预留的“关闭自己”入口，本质上委托给 app 去关。
     def close_this_tab(self):
         """关闭自身所在的标签页"""
         self.app._close_tab(self)
 
-    # ---------- Canvas helper ----------
-    # table_frame 尺寸变化时，同步更新 canvas 的可滚动区域。
+    # ---------- Canvas helper(表格区功能) ----------
     def on_frame_configure(self, event):
-        """调整 Canvas 滚动区域"""
+        """调整 Canvas 滚动区域
+            table_frame 尺寸变化时，同步更新 canvas 的可滚动区域"""
         bbox = self.canvas.bbox("all")
         if not bbox:
             return
@@ -1070,45 +999,44 @@ class OrderTab:
         scroll_height = max(content_height, view_height)
         self.canvas.configure(scrollregion=(0, 0, x2, scroll_height))
 
-    # canvas 宽度变化时，让内部 table_window 跟着一起拉伸。
     def on_canvas_configure(self, event):
-        """让 table_frame 宽度始终跟着 Canvas 可视宽度走"""
+        """让 table_frame 宽度始终跟着 Canvas 可视宽度走
+            event.width 就是 Canvas 当前可视宽度"""
         self.canvas.itemconfigure(self.table_window, width=event.width)
 
-    # 鼠标滚轮滚动表格区域。
-    # 这里保留了原来的写法，同时兼容常见 delta 取值。
     def _on_mousewheel(self, event):
-        """绑定鼠标滚轮事件"""
+        """绑定鼠标滚轮事件
+            鼠标滚轮滚动表格区域"""
         if event.num == 5 or event.delta == -120:
             self.canvas.yview_scroll(1, "units")
         elif event.num == 4 or event.delta == 120:
             self.canvas.yview_scroll(-1, "units")
 
     # ---------- 日期 ----------
-    # 目前只是把日期更新为当前时间；单独保留方法是为了后续扩展定时刷新。
     def update_date_entry(self):
         """更新日期为当前圣保罗时间"""
         self.set_current_datetime()
 
-    # 关闭 tab 前的收尾工作：
-    # - 取消 after 定时器
-    # - 关闭所有型号建议框
-    # - 关闭客人建议框
+
     def cleanup(self):
-        """关闭 tab 前的清理：取消定时器、隐藏浮动建议框"""
+        """关闭 tab 前的收尾工作：
+        - 取消 after 定时器
+        - 关闭所有型号建议框
+        - 关闭客人建议框"""
+        # 取消定时器
         if self._date_after_id:
             try:
                 self.root.after_cancel(self._date_after_id)
             except Exception:
                 pass
             self._date_after_id = None
-
+        # 隐藏并销毁任何存在的 product suggestion listboxes
         for product_row in self.entries:
             try:
                 self.hide_suggestion_listbox(product_row)
             except Exception:
                 continue
-
+        # 隐藏客户 suggestion框
         try:
             self.hide_customer_suggestion()
         except Exception:
@@ -1140,15 +1068,15 @@ class ProductEntryApp:
         self.store_name_to_id = {}       # 店铺名 -> store_id（新增，用于 O(1) 反查）
 
         # ===== 草稿保存相关 =====
-        self._draft_save_after_id = None
-        self._restoring_drafts = False
+        self._draft_save_after_id = None # 草稿自动保存的 after 定时器 ID
+        self._restoring_drafts = False   # 是否正在恢复草稿（全局标志，恢复草稿时 app 和 tab 都会用到）
 
         # ===== 路径相关 =====
         # 优化点：
         # 这里把“基础目录怎么找”和“资源文件怎么拼路径”统一收口，
         # 图片 / 数据库 / 草稿都走同一套入口。
-        self.base_dir = self._resolve_base_dir()
-        self.DRAFT_FILE = self.resource_path("order_drafts.json")
+        self.base_dir = self._resolve_base_dir()   
+        self.DRAFT_FILE = self.resource_path("order_drafts.json")  
         self.main_db_path = self.resource_path("store_products.db")
         self.saved_db_path = self.resource_path("saved_data.db")
 
@@ -1195,20 +1123,24 @@ class ProductEntryApp:
         """主窗口基础设置"""
         self.root.title("订单系统")
         self.root.geometry("480x720")
-        self.root.overrideredirect(True)
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        self.root.attributes("-topmost", False)
+        self.root.overrideredirect(True)        # 去掉系统原生标题栏，后面自己画一个自定义标题栏
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing) # 点击关闭窗口时，执行自己的关闭逻辑
+        self.root.attributes("-topmost", False) # 默认不置顶
 
     def _build_title_bar(self):
         """构建自定义标题栏：tab 按钮区 + 窗口控制按钮"""
+        # TitleBar（放自定义 tab 按钮 + 窗口控制）
         self.title_bar = tk.Frame(self.root, bg="#f0f0f0", height=36)
         self.title_bar.pack(side="top", fill="x")
 
+        # 左侧：自定义 tab 按钮容器（会放多个 tab button）
         self.tab_buttons_frame = tk.Frame(self.title_bar, bg="#ffffff")
         self.tab_buttons_frame.pack(side="left", fill="x", expand=True)
+        # 允许拖动窗口：绑定鼠标事件到整个 tab 按钮区，用户点击并拖动这个区域时都能移动窗口
         self.tab_buttons_frame.bind("<Button-1>", self.start_move)
         self.tab_buttons_frame.bind("<B1-Motion>", self.do_move)
 
+        # 右侧：窗口控制按钮（最小化、关闭）
         window_buttons = tk.Frame(self.title_bar, bg="#f0f0f0")
         window_buttons.pack(side="right")
 
@@ -1222,58 +1154,52 @@ class ProductEntryApp:
         self.plus_button = tk.Button(self.tab_buttons_frame, text="+", command=self.create_new_order)
         self.plus_button.pack(side="left", padx=(6, 2), pady=4)
 
-    # 主内容区是所有订单页的承载容器。
-    # 自定义 tab 切换时，本质上就是在这里 pack / forget 各个订单页 frame。
     def _build_content_area(self):
-        """主内容区：所有订单页都显示在这里"""
+        """主内容区：所有订单页都显示在这里
+            自定义 tab 切换时，本质上就是在这里 pack / forget 各个订单页 frame"""
         self.content_frame = tk.Frame(self.root)
         self.content_frame.pack(side="top", fill="both", expand=True)
 
     # ---------- 窗口控制 ----------
-    # 记录窗口拖动起点。
     def start_move(self, event):
-        """记录鼠标与窗口左上角之间的偏移量"""
+        """记录鼠标与窗口左上角之间的偏移量
+            记录窗口拖动起点坐标，后续移动时用这个偏移量计算新窗口位置。"""
         self.offset_x = event.x_root - self.root.winfo_x()
         self.offset_y = event.y_root - self.root.winfo_y()
 
-    # 根据鼠标当前位置实时更新窗口坐标。
     def do_move(self, event):
         """根据鼠标拖动实时移动窗口"""
         x = event.x_root - self.offset_x
         y = event.y_root - self.offset_y
         self.root.geometry(f"+{x}+{y}")
 
-    # 最小化时暂时取消 overrideredirect，最小化后再恢复。
     def minimize_window(self):
-        """最小化按钮"""
+        """最小化按钮
+        最小化时暂时取消 overrideredirect，最小化后再恢复"""
         self.root.overrideredirect(False)
         self.root.iconify()
         self.root.after(10, lambda: self.root.overrideredirect(True))
 
-    # 当前没有绑到按钮，但保留这个方法方便以后加“最大化”。
     def maximize_window(self):
         """最大化窗口（当前代码未主动绑定按钮）"""
         width = self.root.winfo_screenwidth()
         height = self.root.winfo_screenheight()
         self.root.geometry(f"{width}x{height}+0+0")
 
-    # ---------- DB ----------
+    # ---------- DB (数据库) ----------
     def _connect_db(self, path):
         """创建 SQLite 连接，并打开外键约束
-
-        优化点：
-        原版是两处各自 sqlite3.connect(...)。
-        现在统一收口到一个方法里，避免重复。
         """
         conn = sqlite3.connect(path)
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
-    # 初始化两个数据库：
-    # 1. store_products.db：基础资料（店铺 / 型号 / 单价）
-    # 2. saved_data.db：历史订单流水
     def setup_databases(self):
-        """设置数据库连接和表结构"""
+        """设置数据库连接和表结构
+            初始化两个数据库：
+            1. store_products.db：基础资料（店铺 / 型号 / 单价）
+            2. saved_data.db：历史订单流水"""
+        # 主要数据库: store_products.db 基础资料（店铺 / 型号 / 单价）
         try:
             self.conn_main = self._connect_db(self.main_db_path)
             self.cursor_main = self.conn_main.cursor()
@@ -1303,6 +1229,7 @@ class ProductEntryApp:
             self.conn_main = None
             self.cursor_main = None
 
+        # 新数据库: saved_data.db 历史订单流水
         try:
             self.conn_saved = self._connect_db(self.saved_db_path)
             self.cursor_saved = self.conn_saved.cursor()
@@ -1338,10 +1265,6 @@ class ProductEntryApp:
 
     def get_model_suggestions(self, store_id, text):
         """查询某个店铺下的型号建议列表
-
-        这是重构新增的“数据访问入口”。
-        之前 SQL 直接写在 OrderTab.show_suggestions() 中。
-        现在改到应用层统一管理。
         """
         if not self.cursor_main or not store_id or not text:
             return []
@@ -1363,9 +1286,9 @@ class ProductEntryApp:
         except Exception:
             return []
 
-    # 查询某个店铺下某个型号的价格。
     def get_product_price(self, model, store_id):
-        """根据型号 + 店铺 id 查询价格"""
+        """查询某个店铺下某个型号的价格
+            根据型号 + 店铺 id 查询价格"""
         if not self.cursor_main or not model or not store_id:
             return None
 
@@ -1379,9 +1302,9 @@ class ProductEntryApp:
         except Exception:
             return None
 
-    # 从历史 entries 表中拿客人建议，供客人自动补全使用。
     def get_customer_suggestions(self, text):
-        """从历史订单中查询客人建议列表"""
+        """从历史订单中查询客人建议列表
+            从历史 entries 表中拿客人建议，供客人自动补全使用"""
         if not self.cursor_saved or not text:
             return []
 
@@ -1401,14 +1324,12 @@ class ProductEntryApp:
         except Exception:
             return []
 
-    # 读取店铺表，并建立多种映射缓存。
-    # 这样后面：
-    # - id -> 名称
-    # - 数字店号 -> id
-    # - 店铺名 -> id
-    # 都能快速查到。
     def load_stores(self):
-        """加载 stores，并把选项填入已存在 tab 的 store_combo"""
+        """加载 stores，并把选项填入已存在 tab 的 store_combo
+            读取店铺表，并建立多种映射缓存。
+             - id -> 名称
+             - 数字店号 -> id
+             - 店铺名 -> id"""
         if not self.cursor_main:
             return
 
@@ -1424,10 +1345,9 @@ class ProductEntryApp:
         except Exception as exc:
             messagebox.showerror("数据库错误", f"加载店铺失败: {exc}")
 
-    # 给某个 tab 初始化下拉店铺列表。
-    # 如果 tab 本来就有合法 store_id，优先保留原状态。
     def init_tab_store(self, tab):
-        """初始化某个 tab 的店铺下拉框"""
+        """初始化某个 tab 的店铺下拉框
+            如果 tab 本来就有合法 store_id，优先保留原状态"""
         if not self.stores_by_id:
             return
 
@@ -1445,29 +1365,42 @@ class ProductEntryApp:
         tab.store_id = first_store_id
 
     # ---------- Tab 管理 ----------
-    # 新建一个订单页，并为它创建标题栏按钮。
-    # 这是自定义 tab 系统的核心入口。
     def create_new_order(self, title=DEFAULT_TAB_TITLE):
+        """
+        新建一个订单页，并为它创建标题栏按钮。
+        1. 创建 OrderTab 实例，构建 UI
+        2. 把它添加到 self.order_tabs 管理起来
+        3. 创建标题栏按钮，并把它们的引用保存在 self.tab_button_widgets 里
+         这样后续切换/关闭 tab 时能找到对应的按钮进行状态更新
+        4. 切换到新建的 tab
+        注意：新建 tab 时默认切换到它，用户可以直接开始输入。
+        这里的 title 参数允许指定初始标题，默认为 DEFAULT_TAB_TITLE。
+        """
         tab = OrderTab(self, title=title)
         # 每个订单页的 UI 都挂在 content_frame 里
         tab.frame = ttk.Frame(self.content_frame)
         tab.frame.order_tab = tab
+        # 由 OrderTab 自己负责在自己的 frame 里搭建 UI，tab 只负责提供一个容器和调用接口
         tab.setup_ui(parent=tab.frame)
 
+        # 把新 tab 添加到管理列表里，并初始化它的店铺选项
         self.order_tabs.append(tab)
         self.init_tab_store(tab)
 
+        # 新建时先不把 tab.frame pack 出来，等 select_tab() 统一处理显示和隐藏
         tab.frame.pack_forget()
 
+        #在 title_bar 创建 tab 按钮（label + 小 ×）
         btn_frame, label_btn, close_btn = self._make_tab_button(tab, title)
         self.tab_button_widgets[tab] = (btn_frame, label_btn, close_btn)
 
+        # 切换到新建的 tab
         self.select_tab(tab)
         return tab
 
-    # 为某个订单页创建顶部按钮组：标题按钮 + 关闭按钮。
     def _make_tab_button(self, tab, title):
-        """在 tab_buttons_frame 中创建一个 tab 按钮组：标题 + 关闭按钮"""
+        """为某个订单页创建顶部按钮组：标题按钮 + 关闭按钮
+            在 tab_buttons_frame 中创建一个 tab 按钮组：标题 + 关闭按钮"""
         btn_frame = tk.Frame(self.tab_buttons_frame, bg="#f0f0f0")
         btn_frame.pack(side="left", padx=(4, 0), pady=4)
 
@@ -1479,45 +1412,46 @@ class ProductEntryApp:
 
         return btn_frame, label_btn, close_btn
 
-    # 切换当前显示的订单页。
-    # 做法不是 Notebook 切页，而是把别的 frame 隐藏、当前 frame 显示。
     def select_tab(self, tab):
-        """显示指定 tab 的内容（其它 tab 全部隐藏）"""
+        """切换当前显示的订单页。
+            把别的 frame 隐藏、当前 frame 显示。"""
         for order_tab in self.order_tabs:
             try:
                 order_tab.frame.pack_forget()
             except Exception:
                 continue
-
+        # 只 pack 当前 tab 的 frame，其他 tab 的 frame 都先 forget 掉
         tab.frame.pack(fill="both", expand=True)
-
+        # 更新标题栏按钮状态：当前 tab 的按钮高亮，其他按钮恢复默认
         for order_tab, widgets in self.tab_button_widgets.items():
             _, label_btn, _ = widgets
             label_btn.config(bg="#dcdcdc" if order_tab is tab else "#f0f0f0")
 
-    # 关闭指定订单页。
-    # 顺序上要先 cleanup，再销毁 UI，再从管理结构里移除。
     def _close_tab(self, tab):
-        """关闭指定 tab（由标题栏 × 调用）"""
+        """关闭指定 tab（由标题栏 × 调用）
+            顺序上要先 cleanup，再销毁 UI，再从管理结构里移除"""
         if tab not in self.order_tabs:
             return
 
+        # 关闭前先 cleanup，取消定时器、销毁建议框等
         try:
             tab.cleanup()
         except Exception:
             pass
 
+        # 销毁 tab 的 UI 组件，先销毁 frame（订单页主体），再销毁标题栏按钮
         try:
             tab.frame.destroy()
         except Exception:
             pass
-
+        # 从标题栏按钮管理里移除对应的按钮组件引用，并销毁按钮组件
         widgets = self.tab_button_widgets.pop(tab, None)
         if widgets:
             widgets[0].destroy()
-
+        # 最后从订单页管理列表里移除这个 tab 实例
         self.order_tabs.remove(tab)
 
+        # 关闭后如果还有其他 tab，切换到最后一个；没有 tab 了就新建一个空白订单页
         if self.order_tabs:
             self.select_tab(self.order_tabs[-1])
         else:
@@ -1525,25 +1459,22 @@ class ProductEntryApp:
 
         self.save_drafts_now()
 
-    # 快捷键或外部操作调用：关闭当前显示的 tab。
     def close_current_tab(self):
         """关闭当前显示的 tab"""
         current = self.get_current_tab()
         if current:
             self._close_tab(current)
 
-    # 返回当前正在显示的订单页。
     def get_current_tab(self):
-        """返回当前显示的 tab"""
+        """返回当前正在显示的订单页"""
         for tab in self.order_tabs:
             if tab.frame.winfo_ismapped():
                 return tab
         return None
 
-    # 更新顶部 tab 文本。
-    # 过长内容会被截断，避免标题栏被撑爆。
     def update_tab_title(self, tab, title):
-        """设置 tab 名称"""
+        """更新顶部 tab 文本。
+            过长内容会被截断，避免标题栏被撑爆"""
         if tab not in self.tab_button_widgets:
             return
 
@@ -1555,19 +1486,16 @@ class ProductEntryApp:
         # 标题过长时只显示前几个字符，避免挤占标题栏空间
         label_btn.config(text=title.strip()[:TAB_TITLE_MAX_LEN])
 
-    # Ctrl+S 的落点：保存当前正在看的订单页。
     def save_current_order(self):
+        """Ctrl+S 的落点：保存当前正在看的订单页"""
         tab = self.get_current_tab()
         if tab:
             tab.save_data()
 
     # ---------- 草稿 ----------
-    # 草稿防抖调度入口。
-    # 连续输入时，不要每次都直接写文件。
     def schedule_draft_save(self):
         """安排一次“延迟保存草稿”
-
-        仍然是防抖思路：连续输入时，不要每敲一个字就写磁盘。
+        防抖思路：连续输入时，不要每敲一个字就写磁盘。
         """
         if self._restoring_drafts:
             return
@@ -1581,10 +1509,9 @@ class ProductEntryApp:
         # 重新安排一次延迟保存
         self._draft_save_after_id = self.root.after(DRAFT_SAVE_DELAY_MS, self.save_drafts_now)
 
-    # 立即写草稿文件。
-    # 这里会过滤掉完全空白的订单页，只保存“有意义”的 tab。
     def save_drafts_now(self):
-        """立即把所有有内容的订单页保存到草稿文件"""
+        """立即把所有有内容的订单页保存到草稿文件
+            滤掉完全空白的订单页"""
         if self._restoring_drafts:
             return
 
@@ -1614,9 +1541,7 @@ class ProductEntryApp:
             "tabs": [tab.get_draft_data() for tab in meaningful_tabs],
         }
 
-        # 优化点：
-        # 原版直接 open(self.DRAFT_FILE, 'w') 覆盖写入。
-        # 现在先写到临时文件，再 os.replace() 原子替换。
+        # 先写到临时文件，再 os.replace() 原子替换。
         # 这样即使中途异常，也不容易把正式草稿写成半截坏 JSON。
         tmp_path = f"{self.DRAFT_FILE}.tmp"
         try:
@@ -1631,11 +1556,9 @@ class ProductEntryApp:
             except Exception:
                 pass
 
-    # 程序启动时尝试恢复草稿。
-    # 恢复成功后，还会尽量回到上次用户停留的那个 tab。
     def restore_drafts(self):
         """启动程序时，尝试从草稿文件恢复所有未完成订单
-        恢复成功返回 True，没有草稿或恢复失败返回 False。
+            恢复成功返回 True，没有草稿或恢复失败返回 False。
         """
         if not os.path.exists(self.DRAFT_FILE):
             return False
@@ -1666,9 +1589,8 @@ class ProductEntryApp:
             self._restoring_drafts = False
 
     # ---------- 关闭 ----------
-    # 关闭程序时的统一出口：先存草稿，再关数据库，再销毁窗口。
     def on_closing(self):
-        """关闭应用时先保存草稿，再关闭数据库连接"""
+        """关闭程序时的统一出口：先存草稿，再关数据库，再销毁窗口"""
         self.save_drafts_now()
 
         if self.conn_main:
@@ -1678,14 +1600,11 @@ class ProductEntryApp:
 
         self.root.destroy()
 
-    # 启动 Tk 主循环。
     def run(self):
         """运行入口：启动 Tk 事件循环"""
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.mainloop()
 
-
-# 独立的启动入口函数。
 def main():
     """程序启动入口"""
     root = tk.Tk()

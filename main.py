@@ -77,11 +77,12 @@ class OrderTab:
         self.logo_photo = None     # Logo 对应的 PhotoImage 引用；必须保存引用，否则 Tkinter 图片会消失
 
         # ===== 当前订单页独立拥有的数据 =====
-        self.entries = []                         # 当前 tab 中所有产品行（ProductRow）
+        self.entries = []                   # 当前 tab 中所有产品行（ProductRow）
         self.total_price_var = tk.StringVar(value="")   # 当前订单页“所有产品总价”
-        self.store_id = None                      # 当前订单页选中的店铺 ID
-        self._date_after_id = None               # after 定时器 id（预留给日期更新/取消）
-        self._restoring_state = False            # 是否正处于恢复草稿/批量回填状态
+        self.store_id = None                # 当前订单页选中的店铺 ID
+        self._date_after_id = None          # after 定时器 id（预留给日期更新/取消）
+        self._restoring_state = False       # 是否正处于恢复草稿/批量回填状态
+        self._bulk_updating_prices = False  # 批量刷新价格时，屏蔽 price_var trace 的重复联动
 
         # ===== 先 UI 元素占位，后面 setup_ui() 再创建实际控件 =====
         self.store_combo = None       # 店铺下拉框；选择店铺后会决定型号建议和单价查询的范围
@@ -411,33 +412,49 @@ class OrderTab:
         value = product_row.model_var.get()
         if value == "":
             self.hide_suggestion_listbox(product_row)
-            product_row.price_var.set("")
-            self.update_total_price(product_row)
-        else:
-            self.show_suggestions(product_row, value)
 
+            self._bulk_updating_prices = True
+            try:
+                product_row.price_var.set("")
+            finally:
+                self._bulk_updating_prices = False
+
+            self.update_total_price(product_row)
+            self.mark_draft_dirty()
+            return
+
+        self.show_suggestions(product_row, value)
         self.mark_draft_dirty()
 
     def on_model_entry_keyrelease(self, event, product_row):
         """处理型号输入框的键盘事件
-            普通字符：走“重新查建议”
-            上下/回车/Esc：走“操作建议框”"""
-        if event.keysym in ("Up", "Down", "Return", "Escape"):
-            if product_row.suggestion_listbox and product_row.suggestion_listbox.winfo_viewable():
-                if event.keysym == "Up":
-                    self.move_in_suggestions(product_row, -1)
-                elif event.keysym == "Down":
-                    self.move_in_suggestions(product_row, 1)
-                elif event.keysym == "Return":
-                    self.select_suggestion(product_row)
-                elif event.keysym == "Escape":
-                    self.hide_suggestion_listbox(product_row)
+        普通字符不再手动调用 on_model_var_change，
+        让 model_var 的 trace_add 自己处理，避免重复联动。
+        """
+        if event.keysym not in ("Up", "Down", "Return", "Escape"):
             return
 
-        if not event.char:
+        if not product_row.suggestion_listbox:
             return
 
-        self.on_model_var_change(product_row)
+        try:
+            if not product_row.suggestion_listbox.winfo_viewable():
+                return
+        except tk.TclError:
+            return
+
+        if event.keysym == "Up":
+            self.move_in_suggestions(product_row, -1)
+            return "break"
+        elif event.keysym == "Down":
+            self.move_in_suggestions(product_row, 1)
+            return "break"
+        elif event.keysym == "Return":
+            self.select_suggestion(product_row)
+            return "break"
+        elif event.keysym == "Escape":
+            self.hide_suggestion_listbox(product_row)
+            return "break"
 
     def show_suggestions(self, product_row, text):
         """从共享 DB 查询型号并在表格附近显示 listbox
@@ -536,8 +553,15 @@ class OrderTab:
         
         model = self._get_var_text(product_row.model_var)
         price = self.app.get_product_price(model, self.store_id)
-        product_row.price_var.set("" if price is None else f"{price:.2f}")
+
+        self._bulk_updating_prices = True
+        try:
+            product_row.price_var.set("" if price is None else f"{price:.2f}")
+        finally:
+            self._bulk_updating_prices = False
+
         self.update_total_price(product_row)
+        self.mark_draft_dirty()
 
     def update_total_price(self, product_row, recalculate_order_total=True):
         """更新单行和总价
@@ -582,7 +606,7 @@ class OrderTab:
             作用：
             1. 重新计算这一行的小计和整单总价
             2. 标记当前订单页需要保存草稿"""
-        if self._restoring_state:
+        if self._restoring_state or self._bulk_updating_prices:
             return
         self.update_total_price(product_row)
         self.mark_draft_dirty()
@@ -737,7 +761,12 @@ class OrderTab:
 
     def hide_customer_suggestion(self):
         """统一隐藏客人建议框，并清空“当前高亮索引”"""
-        self.customer_suggestion_frame.place_forget()
+        try:
+            if self.customer_suggestion_frame and self.customer_suggestion_frame.winfo_exists():
+                self.customer_suggestion_frame.place_forget()
+        except Exception:
+            pass
+
         self.customer_suggestion_listbox_visible = False
         self.customer_suggestion_index = -1
 
@@ -854,11 +883,16 @@ class OrderTab:
             同步后要立即刷新所有商品价格，因为不同店铺价格可能不同
             如果客人名称中包含的店号不存在，则使用默认店号（当前选择的店铺）"""
         store_id = self.extract_store_id_from_customer(customer_name)
-        if store_id and store_id in self.app.stores_by_id:
-            self.store_combo.set(self.app.stores_by_id[store_id])
-            self.store_id = store_id
-            self.update_all_prices()
-            self.mark_draft_dirty()
+        if not store_id or store_id not in self.app.stores_by_id:
+            return False
+
+        if store_id == self.store_id:
+            return False
+
+        self.store_combo.set(self.app.stores_by_id[store_id])
+        self.store_id = store_id
+        self.update_all_prices()
+        return True
 
     def on_store_selected(self):
         """手动切换店铺
@@ -871,17 +905,18 @@ class OrderTab:
 
     def update_all_prices(self):
         """根据当前店号更新所有产品行的单价和总价
-        1. 逐行更新价格和行总价
-        2. 最后统一 calculate_total_price() 一次
         """
-        for product_row in self.entries:
-            model = self._get_var_text(product_row.model_var)
-            price = self.app.get_product_price(model, self.store_id)
-            product_row.price_var.set("" if price is None else f"{price:.2f}")
-            self.update_total_price(product_row, recalculate_order_total=False)
+        self._bulk_updating_prices = True
+        try:
+            for product_row in self.entries:
+                model = self._get_var_text(product_row.model_var)
+                price = self.app.get_product_price(model, self.store_id)
+                product_row.price_var.set("" if price is None else f"{price:.2f}")
+                self.update_total_price(product_row, recalculate_order_total=False)
 
-        # 所有行处理完后，再统一整单重算一次
-        self.calculate_total_price()
+            self.calculate_total_price()
+        finally:
+            self._bulk_updating_prices = False
 
     def _collect_product_data(self):
         """收集当前表单里的产品数据，并做基础数值校验
@@ -1036,11 +1071,20 @@ class OrderTab:
                 self.hide_suggestion_listbox(product_row)
             except Exception:
                 continue
-        # 隐藏客户 suggestion框
+
+        # 隐藏并销毁客户 suggestion 浮层（它挂在 root 上，不会跟着 tab.frame 一起销毁）
         try:
             self.hide_customer_suggestion()
+            if self.customer_suggestion_frame:
+                self.customer_suggestion_frame.destroy()
         except Exception:
             pass
+        finally:
+            self.customer_suggestion_frame = None
+            self.customer_suggestion_listbox = None
+            self.customer_scrollbar = None
+            self.customer_suggestion_listbox_visible = False
+            self.customer_suggestion_index = -1
 
 
 class ProductEntryApp:

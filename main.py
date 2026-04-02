@@ -1,4 +1,3 @@
-
 import json
 import os
 import sqlite3
@@ -123,9 +122,11 @@ class OrderTab:
         header_frame = ttk.Frame(top_frame)
         header_frame.pack(side="left", fill="x", expand=True)
 
+        # 尝试加载 Logo 图片；如果失败（文件缺失或损坏），就用文本占位
         logo_label = self._build_logo_label(header_frame)
         logo_label.pack(side="left", padx=(0, 10))
 
+        # 公司信息文本区域，垂直放置在 Logo 右侧
         text_frame = ttk.Frame(header_frame)
         text_frame.pack(side="left", fill="x", expand=True)
         ttk.Label(text_frame, text="PELICULAS - CAPAS PARA", font=("Arial", 10, "bold")).pack(anchor="w")
@@ -142,6 +143,9 @@ class OrderTab:
 
         self.save_button = ttk.Button(button_frame, text="保存数据", command=self.save_data)
         self.save_button.pack(side="top", pady=2)
+
+        self.delete_order_button = ttk.Button(button_frame, text="删除该订单", command=self.close_this_tab)
+        self.delete_order_button.pack(side="top", pady=2)
 
     def _build_logo_label(self, parent):
         """尝试加载 Logo；失败时使用文本占位

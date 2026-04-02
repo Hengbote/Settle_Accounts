@@ -10,3 +10,6 @@ __pycache__/
 
 # 环境文件
 .env
+
+# 订单草稿
+order_drafts.json

@@ -6,7 +6,7 @@ import tkinter as tk
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import partial
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from PIL import Image, ImageTk
 from zoneinfo import ZoneInfo
@@ -77,7 +77,9 @@ class OrderTab:
 
         # ===== 当前订单页独立拥有的数据 =====
         self.entries = []                   # 当前 tab 中所有产品行（ProductRow）
-        self.total_price_var = tk.StringVar(value="")   # 当前订单页“所有产品总价”
+        self.total_price_var = tk.StringVar(value="")    # 原始商品总价
+        self.total_display_var = tk.StringVar(value="")  # 页面显示文本
+        self.discount_amount = 0.0                       # 当前订单折扣
         self.store_id = None                # 当前订单页选中的店铺 ID
         self._date_after_id = None          # after 定时器 id（预留给日期更新/取消）
         self._restoring_state = False       # 是否正处于恢复草稿/批量回填状态
@@ -116,9 +118,11 @@ class OrderTab:
 
     def _build_header(self):
         """构建顶部区域：Logo、公司信息、功能按钮"""
+        #顶部区域：包含左侧的 Logo + 公司信息，和右侧的功能按钮
         top_frame = ttk.Frame(self.main_frame)
         top_frame.pack(fill="x", pady=5)
 
+        #左侧信息区：Logo + 公司信息文本
         header_frame = ttk.Frame(top_frame)
         header_frame.pack(side="left", fill="x", expand=True)
 
@@ -138,14 +142,24 @@ class OrderTab:
         button_frame = ttk.Frame(top_frame)
         button_frame.pack(side="right", anchor="n", padx=8)
 
-        self.add_row_button = ttk.Button(button_frame, text="添加新产品行", command=self.add_row)
-        self.add_row_button.pack(side="top", pady=2)
+        # 按钮区域分两行放置，第一行放折扣和添加行按钮，第二行放保存和删除订单按钮
+        row1 = ttk.Frame(button_frame)
+        row1.pack(side="top", pady=2)
+        row2 = ttk.Frame(button_frame)
+        row2.pack(side="top", pady=2)
 
-        self.save_button = ttk.Button(button_frame, text="保存数据", command=self.save_data)
-        self.save_button.pack(side="top", pady=2)
-
-        self.delete_order_button = ttk.Button(button_frame, text="删除该订单", command=self.close_this_tab)
-        self.delete_order_button.pack(side="top", pady=2)
+        #折扣
+        self.discount_button = ttk.Button(row1, text="折扣", width=6,command=self.prompt_discount)
+        self.discount_button.pack(side="left", padx=2)
+        #添加行
+        self.add_row_button = ttk.Button(row1, text="添加行", width=6, command=self.add_row)
+        self.add_row_button.pack(side="left", padx=2)
+        #保存
+        self.save_button = ttk.Button(row2, text="保存", width=6, command=self.save_data)
+        self.save_button.pack(side="left", padx=2)
+        #删除订单
+        self.delete_order_button = ttk.Button(row2, text="删订单", width=6,command=self.close_this_tab)
+        self.delete_order_button.pack(side="left", padx=2)
 
     def _build_logo_label(self, parent):
         """尝试加载 Logo；失败时使用文本占位
@@ -226,8 +240,13 @@ class OrderTab:
         """构建总价显示区"""
         total_frame = ttk.Frame(self.main_frame)
         total_frame.pack(fill="x", pady=5)
-        ttk.Label(total_frame, text="所有产品总价：", font=("Segoe UI", 16, "bold")).pack(side="left")
-        ttk.Label(total_frame, textvariable=self.total_price_var, font=("Segoe UI", 16, "bold")).pack(side="left", padx=(10, 0))
+
+        ttk.Label(total_frame, text="总价：", font=("Segoe UI", 16, "bold")).pack(side="left")
+        ttk.Label(
+            total_frame,
+            textvariable=self.total_display_var,
+            font=("Segoe UI", 16, "bold")
+        ).pack(side="left", padx=(10, 0))
 
     def _build_table_section(self):
         """构建商品表格区：Canvas + 内部 Frame + 滚动条
@@ -567,6 +586,78 @@ class OrderTab:
         self.update_total_price(product_row)
         self.mark_draft_dirty()
 
+    # ---------- 总额 折扣 ----------
+
+    def prompt_discount(self):
+        """弹窗输入折扣金额。空字符串=清除折扣"""
+        has_product = any(self._get_var_text(product_row.model_var) for product_row in self.entries)
+        
+        # 没有产品，且当前也没有折扣时，才禁止打开
+        if not has_product and self.discount_amount == 0:
+            messagebox.showwarning("提示", "请先录入产品，再设置折扣")
+            return
+        
+        initial_value = f"{self.discount_amount:.2f}" if self.discount_amount else ""
+
+        value = simpledialog.askstring(
+            "输入折扣",
+            "请输入要减去的折扣金额：",
+            initialvalue=initial_value,
+            parent=self.root,
+        )
+        if value is None:
+            return
+
+        value = value.strip()
+        if value == "":
+            amount = 0.0
+        else:
+            try:
+                amount = float(value)
+            except ValueError:
+                messagebox.showwarning("输入错误", "折扣必须是数字")
+                return
+
+            if amount < 0:
+                messagebox.showwarning("输入错误", "折扣不能小于 0")
+                return
+
+        self.discount_amount = amount
+        self.refresh_total_display()
+        self.mark_draft_dirty()
+
+
+    def get_raw_total_amount(self):
+        """获取原始商品总价"""
+        try:
+            return float(self.total_price_var.get() or 0)
+        except ValueError:
+            return 0.0
+
+
+    def get_final_total_amount(self):
+        """获取折后总价"""
+        raw_total = self.get_raw_total_amount()
+        return max(raw_total - self.discount_amount, 0.0)
+
+
+    def refresh_total_display(self):
+        """刷新页面上的总价显示"""
+        has_product = any(self._get_var_text(product_row.model_var) for product_row in self.entries)
+        raw_total = self.get_raw_total_amount()
+        final_total = self.get_final_total_amount()
+
+        if not has_product and self.discount_amount == 0:
+            self.total_display_var.set("")
+            return
+
+        if self.discount_amount != 0:
+            self.total_display_var.set(
+                f"{raw_total:.2f} 折扣 {self.discount_amount:.2f} = {final_total:.2f}"
+            )
+        else:
+            self.total_display_var.set(f"{raw_total:.2f}" if has_product else "")
+
     def update_total_price(self, product_row, recalculate_order_total=True):
         """更新单行和总价
         - 平时改单行时，保持原来的行为：顺手重算整单总价
@@ -603,6 +694,7 @@ class OrderTab:
                     continue
 
         self.total_price_var.set(f"{total:.2f}" if has_product else "")
+        self.refresh_total_display()
 
     # ---------- 草稿相关 ----------
     def on_quantity_or_price_change(self, product_row):
@@ -645,6 +737,8 @@ class OrderTab:
             return True
         if self.ship_time_entry.get().strip():
             return True
+        if self.discount_amount != 0:
+            return True
 
         return any(
             self._get_var_text(product_row.quantity_var)
@@ -676,6 +770,7 @@ class OrderTab:
             "date": self.date_entry.get(),           # 日期
             "customer": self.customer_entry.get(),   # 客人
             "ship_time": self.ship_time_entry.get(), # 发货时间
+            "discount": self.discount_amount,        # 折扣金额
             "rows": rows,                            # 所有产品行
         }
 
@@ -699,6 +794,11 @@ class OrderTab:
             self.set_date_value(draft_data.get("date", self.get_current_datetime_text()))
             self._set_entry_text(self.customer_entry, draft_data.get("customer", ""))
             self._set_entry_text(self.ship_time_entry, draft_data.get("ship_time", ""))
+
+            try:
+                self.discount_amount = float(draft_data.get("discount", 0) or 0)
+            except (TypeError, ValueError):
+                self.discount_amount = 0.0
 
             rows = draft_data.get("rows", [])
             target_count = max(DEFAULT_ROW_COUNT, len(rows))
@@ -953,7 +1053,7 @@ class OrderTab:
     def clear_form(self):
         """清空当前订单页表单
         1. 进入 _restoring_state，避免触发联动保存
-        2. 保存成功后 清空客人、发货时间输入框，隐藏客人建议
+        2. 保存成功后 清空客人、发货时间输入框、所有商品行、折扣，隐藏客人建议框，重置 tab 名称，重置日期，刷新总价显示
         """
         self._restoring_state = True
         try:
@@ -962,6 +1062,7 @@ class OrderTab:
             self.hide_customer_suggestion()
             self.app.update_tab_title(self, "")
             self.set_current_datetime()
+            self.discount_amount = 0.0  
 
             for product_row in self.entries:
                 self._clear_product_row(product_row)
@@ -1000,9 +1101,11 @@ class OrderTab:
 
         try:
             cursor = self.app.cursor_saved
+            final_total = self.get_final_total_amount()
+
             cursor.execute(
-                "INSERT INTO entries (store_id, customer, date) VALUES (?, ?, ?)",
-                (self.store_id, customer, date),
+                "INSERT INTO entries (store_id, customer, date, discount, final_total) VALUES (?, ?, ?, ?, ?)",
+                (self.store_id, customer, date, self.discount_amount, final_total),
             )
             entry_id = cursor.lastrowid
 
@@ -1301,6 +1404,8 @@ class ProductEntryApp:
                     store_id INTEGER NOT NULL,
                     customer TEXT,
                     date TEXT,
+                    discount REAL NOT NULL DEFAULT 0,
+                    final_total REAL NOT NULL DEFAULT 0,
                     FOREIGN KEY(store_id) REFERENCES stores(id)
                 )
                 """
@@ -1320,6 +1425,7 @@ class ProductEntryApp:
                 """
             )
 
+            self._migrate_saved_entries_table()
             self.conn_saved.commit()
 
         except Exception as exc:
@@ -1440,6 +1546,24 @@ class ProductEntryApp:
         except Exception as exc:
             self.conn_saved.rollback()
             messagebox.showerror("数据库错误", f"同步保存库店铺失败: {exc}")
+
+    def _migrate_saved_entries_table(self):
+        """给旧版 saved_data.db 的 entries 表补齐新列"""
+        if not self.cursor_saved:
+            return
+
+        self.cursor_saved.execute("PRAGMA table_info(entries)")
+        columns = {row[1] for row in self.cursor_saved.fetchall()}
+
+        if "discount" not in columns:
+            self.cursor_saved.execute(
+                "ALTER TABLE entries ADD COLUMN discount REAL NOT NULL DEFAULT 0"
+            )
+
+        if "final_total" not in columns:
+            self.cursor_saved.execute(
+                "ALTER TABLE entries ADD COLUMN final_total REAL NOT NULL DEFAULT 0"
+            )
 
     def init_tab_store(self, tab):
         """初始化某个 tab 的店铺下拉框
